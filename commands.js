@@ -4,26 +4,19 @@ const path = require('path');
 const config = require('./config');
 
 // ─── EXPORT MAP ──────────────────────────────────────────────────
-// We assign commands directly to module.exports so they can be
-// dynamically reloaded without breaking references.
 const commands = module.exports;
 
 // ─── PLUGINS DIRECTORY ──────────────────────────────────────────
 const pluginsDir = path.join(__dirname, 'plugins');
 
-// Ensure plugins directory exists
 if (!fs.existsSync(pluginsDir)) {
     fs.mkdirSync(pluginsDir, { recursive: true });
 }
 
 // ─── FILE SCANNER ────────────────────────────────────────────────
-/**
- * Recursively finds all .js files in a directory.
- */
 function getFilesRecursive(dir) {
     let results = [];
     if (!fs.existsSync(dir)) return results;
-
     const list = fs.readdirSync(dir);
     for (const file of list) {
         const filePath = path.join(dir, file);
@@ -38,32 +31,24 @@ function getFilesRecursive(dir) {
 }
 
 // ─── COMMAND REGISTRATION ────────────────────────────────────────
-/**
- * Registers a single command into the exports map.
- * If the command is prefixless, it's stored as-is.
- * Otherwise, it's prefixed with config.prefix.
- */
 function register(cmd) {
     if (!cmd.name || typeof cmd.execute !== 'function') return;
 
-    const key = cmd.isPrefixless
+    // Determine key:
+    // - If config.prefix is null or undefined → always prefixless
+    // - If cmd.isPrefixless → prefixless
+    // - Else prepend config.prefix
+    const usePrefixless = (config.prefix === null || config.prefix === undefined) || cmd.isPrefixless;
+    const key = usePrefixless
         ? cmd.name.toLowerCase()
         : `${config.prefix}${cmd.name.toLowerCase()}`;
 
-    // Avoid overwriting core methods (like 'reload')
     if (key === 'reload') return;
-
     commands[key] = cmd.execute;
 }
 
 // ─── HOT RELOAD ──────────────────────────────────────────────────
-/**
- * Clears all registered commands (except the 'reload' method itself)
- * and re-scans the plugins directory to re-register everything.
- * This allows live updates without restarting the bot.
- */
 function reloadCommands() {
-    // Clear everything except the 'reload' function itself
     for (const key in commands) {
         if (key !== 'reload') {
             delete commands[key];
@@ -71,12 +56,9 @@ function reloadCommands() {
     }
 
     const pluginFiles = getFilesRecursive(pluginsDir);
-
     for (const filePath of pluginFiles) {
         try {
-            // Remove from require cache to get fresh copy
             delete require.cache[require.resolve(filePath)];
-
             const plugin = require(filePath);
             if (Array.isArray(plugin)) {
                 plugin.forEach(cmd => register(cmd));
@@ -88,12 +70,12 @@ function reloadCommands() {
         }
     }
 
-    console.log(`🔄 [LOADER] Recompiled all triggers under prefix: "${config.prefix}"`);
+    const prefixDisplay = config.prefix === null || config.prefix === undefined ? 'none (prefixless)' : config.prefix;
+    console.log(`🔄 [LOADER] Recompiled all triggers under prefix: "${prefixDisplay}"`);
 }
 
 // ─── INITIAL BOOT LOAD ──────────────────────────────────────────
 console.log(`📦 [LOADER] Scanning plugins in: ${pluginsDir}`);
-
 const pluginFiles = getFilesRecursive(pluginsDir);
 
 if (pluginFiles.length === 0) {
@@ -113,7 +95,7 @@ for (const filePath of pluginFiles) {
     }
 }
 
-// ─── ATTACH RELOAD METHOD ────────────────────────────────────────
 commands.reload = reloadCommands;
 
-console.log(`✅ [LOADER] Loaded ${Object.keys(commands).length - 1} commands with prefix "${config.prefix}"`);
+const prefixDisplay = config.prefix === null || config.prefix === undefined ? 'none (prefixless)' : config.prefix;
+console.log(`✅ [LOADER] Loaded ${Object.keys(commands).length - 1} commands with prefix "${prefixDisplay}"`);
