@@ -1,7 +1,9 @@
-// pair.js – Bleach Edition (Kyōka Suigetsu Protocol)
+// pair.js – Bleach Edition (Kyōka Suigetsu Protocol) with Command Handling
 const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
+const config = require('./config');
+const commands = require('./commands'); // Import the command registry
 
 // ─── KIDŌ SPELLS (without translation) ──────────────────────────
 const KIDO_SPELLS = [
@@ -79,7 +81,6 @@ async function startBot() {
     let choice = await question('\x1b[35mSelect your weapon (1 or 2): \x1b[0m');
     choice = choice.trim();
 
-    // ─── RITUAL: SHATTER!! ─────────────────────────────────────
     console.log('\x1b[36m"Shatter!! Kyouka Suigetsu!"\x1b[0m');
 
     if (choice === '1') {
@@ -91,12 +92,10 @@ async function startBot() {
         console.log('\x1b[31m❌ Invalid number. The blade rejects you. Restart.\x1b[0m');
         process.exit(1);
       }
-      // ─── RITUAL: PERFECT HYPNOSIS ────────────────────────────
       console.log('\x1b[33m"You have seen my zanpakto, Kyouka Suigetsu.... It\'s Ability is perfect hypnosis"\x1b[0m');
       console.log(`\x1b[36m⏳ Requesting Zanpakutō pairing code for ${targetNumber}...\x1b[0m\n`);
     } else if (choice === '2') {
       pairingMode = false;
-      // ─── RITUAL: PERFECT HYPNOSIS (also for QR) ──────────────
       console.log('\x1b[33m"You have seen my zanpakto, Kyouka Suigetsu.... It\'s Ability is perfect hypnosis"\x1b[0m');
       console.log('\n\x1b[35m📱 Hollow QR mode selected. Awaiting the gate to open...\x1b[0m\n');
     } else {
@@ -134,7 +133,6 @@ async function startBot() {
       pairingCodeRequested = true;
       await delay(5000);
       try {
-        // ─── CUSTOM PAIR CODE: HADONO90 ────────────────────────
         const code = await sock.requestPairingCode(targetNumber, "HADONO90");
         console.log(`\n\x1b[32m🔑 Your Zanpakutō Pairing Code: \x1b[1m${code}\x1b[0m`);
         console.log(`\x1b[36m👉 Enter this code in WhatsApp > Linked Devices\x1b[0m\n`);
@@ -166,7 +164,7 @@ async function startBot() {
       if (targetNumber) {
         const pairerJid = targetNumber + '@s.whatsapp.net';
         try {
-          const prefixVal = '⚡';
+          const prefixVal = config.prefix || '⚡'; // fallback for display
           const timeStr = new Date().toLocaleTimeString('en-US', {
             timeZone: 'Africa/Lagos',
             hour12: true
@@ -193,9 +191,7 @@ async function startBot() {
             ` ${randomKido}\n` +
             `━━━━━━━━━━━━━━━━`;
 
-          // GIF direct URL
           const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
-
           await sock.sendMessage(pairerJid, {
             video: { url: gifUrl },
             gifPlayback: true,
@@ -217,7 +213,39 @@ async function startBot() {
     }
   });
 
-  // ─── No extra handlers – barebones pairing only ─────────────
+  // ─── MESSAGE HANDLER: PROCESS COMMANDS ────────────────────────
+  sock.ev.on('messages.upsert', async (chatUpdate) => {
+    const msg = chatUpdate.messages[0];
+    if (!msg || msg.key.fromMe) return; // ignore own messages
+
+    // Extract text from various message types
+    let text = '';
+    if (msg.message?.conversation) {
+      text = msg.message.conversation;
+    } else if (msg.message?.extendedTextMessage?.text) {
+      text = msg.message.extendedTextMessage.text;
+    } else {
+      return; // no text to process
+    }
+
+    const args = text.trim().split(/\s+/);
+    const commandName = args.shift().toLowerCase(); // first word
+
+    // Check if the command exists in the registry
+    const handler = commands[commandName];
+    if (handler && typeof handler === 'function') {
+      try {
+        await handler(sock, msg, args);
+      } catch (err) {
+        console.error(`[COMMAND ERROR] ${commandName}:`, err);
+        // Optionally notify the user
+        const jid = msg.key.remoteJid;
+        await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
+      }
+    }
+  });
+
+  // ─── No additional handlers needed ─────────────────────────────
 }
 
 module.exports = { startBot };
