@@ -1,13 +1,13 @@
-// pair.js – Bleach Edition (Kyōka Suigetsu Protocol) with Command Handling
+// pair.js – Bleach Edition (Kyōka Suigetsu Protocol)
+// Now uses handlers.js for message and group event processing.
 const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
 const config = require('./config');
-const commands = require('./commands'); // Import the command registry
+const { handleMessage, handleGroupParticipants } = require('./handlers');
 
-// ─── KIDŌ SPELLS (without translation) ──────────────────────────
+// ─── KIDŌ SPELLS ──────────────────────────────────────────────────
 const KIDO_SPELLS = [
-  // Hadō
   "Hadō #1: Shō",
   "Hadō #4: Byakurai",
   "Hadō #11: Tsuzuri Raiden",
@@ -26,7 +26,6 @@ const KIDO_SPELLS = [
   "Hadō #91: Senjukōtentaihō",
   "Hadō #96: Ittō Kasō",
   "Hadō #99: Goryūtenmetsu",
-  // Bakudō
   "Bakudō #1: Sai",
   "Bakudō #4: Hainawa",
   "Bakudō #8: Seki",
@@ -38,7 +37,6 @@ const KIDO_SPELLS = [
   "Bakudō #75: Gochūtekkan",
   "Bakudō #81: Dankū",
   "Bakudō #99, Part 1: Kin",
-  // Kaidō
   "Kaidō: Keikatsu"
 ];
 
@@ -160,11 +158,18 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
-      // ─── Send Welcome Message to the Pairer's DM ─────────────
-      if (targetNumber) {
-        const pairerJid = targetNumber + '@s.whatsapp.net';
+      // ─── Send Welcome Message to Owner's DM ──────────────────
+      let recipientJid = null;
+      if (config.owner && config.owner.length > 0 && config.owner[0]) {
+        recipientJid = config.owner[0] + '@s.whatsapp.net';
+      } else if (targetNumber) {
+        recipientJid = targetNumber + '@s.whatsapp.net';
+      }
+
+      if (recipientJid) {
+        await delay(2000);
         try {
-          const prefixVal = config.prefix || '⚡'; // fallback for display
+          const prefixVal = config.prefix || '⚡';
           const timeStr = new Date().toLocaleTimeString('en-US', {
             timeZone: 'Africa/Lagos',
             hour12: true
@@ -192,18 +197,18 @@ async function startBot() {
             `━━━━━━━━━━━━━━━━`;
 
           const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
-          await sock.sendMessage(pairerJid, {
+          await sock.sendMessage(recipientJid, {
             video: { url: gifUrl },
             gifPlayback: true,
             caption: welcomeText
           });
 
-          console.log(`\x1b[32m✅ Welcome message dispatched to ${pairerJid}\x1b[0m`);
+          console.log(`\x1b[32m✅ Welcome message dispatched to ${recipientJid}\x1b[0m`);
         } catch (err) {
           console.error(`\x1b[31m❌ Failed to send welcome message: ${err.message}\x1b[0m`);
         }
       } else {
-        console.warn('\x1b[33m⚠️ No target number available; skipping welcome DM.\x1b[0m');
+        console.warn('\x1b[33m⚠️ No owner number or target number found; skipping welcome DM.\x1b[0m');
       }
 
       // ─── Always-Online Presence ──────────────────────────────
@@ -213,39 +218,15 @@ async function startBot() {
     }
   });
 
-  // ─── MESSAGE HANDLER: PROCESS COMMANDS ────────────────────────
+  // ─── EVENT: MESSAGES ──────────────────────────────────────────
   sock.ev.on('messages.upsert', async (chatUpdate) => {
-    const msg = chatUpdate.messages[0];
-    if (!msg || msg.key.fromMe) return; // ignore own messages
-
-    // Extract text from various message types
-    let text = '';
-    if (msg.message?.conversation) {
-      text = msg.message.conversation;
-    } else if (msg.message?.extendedTextMessage?.text) {
-      text = msg.message.extendedTextMessage.text;
-    } else {
-      return; // no text to process
-    }
-
-    const args = text.trim().split(/\s+/);
-    const commandName = args.shift().toLowerCase(); // first word
-
-    // Check if the command exists in the registry
-    const handler = commands[commandName];
-    if (handler && typeof handler === 'function') {
-      try {
-        await handler(sock, msg, args);
-      } catch (err) {
-        console.error(`[COMMAND ERROR] ${commandName}:`, err);
-        // Optionally notify the user
-        const jid = msg.key.remoteJid;
-        await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
-      }
-    }
+    await handleMessage(sock, chatUpdate);
   });
 
-  // ─── No additional handlers needed ─────────────────────────────
+  // ─── EVENT: GROUP PARTICIPANTS ───────────────────────────────
+  sock.ev.on('group-participants.update', async (update) => {
+    await handleGroupParticipants(sock, update);
+  });
 }
 
 module.exports = { startBot };
