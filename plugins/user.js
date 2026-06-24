@@ -1,7 +1,6 @@
 /**
  * plugins/user.js
  * Limitless-MD Plugin – Kyōka Suigetsu Command Arsenal
- * All commands follow the new module format: { name, isPrefixless?, execute }
  */
 
 const fs = require('fs');
@@ -17,7 +16,17 @@ const os = require('os');
 
 // ─── HELPERS ──────────────────────────────────────────────────────
 
-// Format uptime from milliseconds
+// Recursively unwrap Baileys message wrappers (ephemeral, view-once, etc.)
+function getRawMessage(message) {
+    if (!message) return null;
+    if (message.ephemeralMessage?.message) return getRawMessage(message.ephemeralMessage.message);
+    if (message.viewOnceMessage?.message) return getRawMessage(message.viewOnceMessage.message);
+    if (message.viewOnceMessageV2?.message) return getRawMessage(message.viewOnceMessageV2.message);
+    if (message.viewOnceMessageV2Extension?.message) return getRawMessage(message.viewOnceMessageV2Extension.message);
+    if (message.documentWithCaptionMessage?.message) return getRawMessage(message.documentWithCaptionMessage.message);
+    return message;
+}
+
 function formatUptime(ms) {
     const seconds = Math.floor(ms / 1000);
     const d = Math.floor(seconds / (3600 * 24));
@@ -32,7 +41,6 @@ function formatUptime(ms) {
     return parts.join(' ');
 }
 
-// Parse duration string (e.g., "5s", "2m", "1h")
 function parseDuration(str) {
     const match = str.match(/^(\d+)([smh])$/i);
     if (!match) return null;
@@ -44,7 +52,6 @@ function parseDuration(str) {
     return null;
 }
 
-// Convert text to Mathematical Bold Italic
 function toBoldItalic(text) {
     const map = {
         'A': '𝘈', 'B': '𝘉', 'C': '𝘊', 'D': '𝘋', 'E': '𝘌', 'F': '𝘍', 'G': '𝘎', 'H': '𝘏',
@@ -61,7 +68,6 @@ function toBoldItalic(text) {
     return text.split('').map(ch => map[ch] || ch).join('');
 }
 
-// Get bot network speed (latency)
 async function getBotSpeed() {
     try {
         const start = Date.now();
@@ -93,10 +99,10 @@ function saveAliveSettings(settings) {
     fs.writeFileSync(ALIVE_STORAGE_PATH, JSON.stringify(settings, null, 2));
 }
 
-// ─── COMMAND EXPORTS (new format) ──────────────────────────────
+// ─── COMMAND EXPORTS ─────────────────────────────────────────────
 
 module.exports = [
-    // 1. ping – Ritual with loading animation
+    // 1. ping – UPDATED with progress bar animation on third line
     {
         name: 'ping',
         isPrefixless: false,
@@ -104,18 +110,36 @@ module.exports = [
             const jid = msg.key.remoteJid;
             const sender = msg.key.participant || msg.key.remoteJid;
 
+            // Step 1: Shatter!
             await sock.sendMessage(jid, { text: 'Shatter!' });
             await delay(2000);
 
+            // Step 2: Kyouka Suigetsu..
             await sock.sendMessage(jid, { text: 'Kyouka Suigetsu..' });
             await delay(2000);
 
-            const loadingText = '▬✊ι═════════ﺤ  (loading...)';
-            const sentMsg = await sock.sendMessage(jid, { text: loadingText });
+            // Step 3: Send the initial message with sword and empty progress bar
+            const swordLine = '▬✊ι═════════ﺤ  [□□□□□□]';
+            const sentMsg = await sock.sendMessage(jid, { text: swordLine });
             const msgKey = sentMsg.key;
 
-            await delay(7000);
+            // Progress frames (Option A)
+            const frames = ['[□□□□□□]', '[■□□□□□]', '[■■□□□□]', '[■■■□□□]', '[■■■■□□]', '[■■■■■□]', '[■■■■■■]'];
+            let frameIndex = 0;
+            const totalFrames = frames.length;
 
+            // Animation loop for 7 seconds (update every 400ms)
+            const startTime = Date.now();
+            const duration = 7000;
+            while (Date.now() - startTime < duration) {
+                const frame = frames[frameIndex % totalFrames];
+                const newText = `▬✊ι═════════ﺤ  ${frame}`;
+                await sock.sendMessage(jid, { text: newText, edit: msgKey });
+                frameIndex++;
+                await delay(400);
+            }
+
+            // Final edit: replace with mention + spiritual pressure
             const receivedTime = msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now();
             const latency = Date.now() - receivedTime;
             const spiritualPressure = latency * 10;
@@ -133,7 +157,7 @@ module.exports = [
         }
     },
 
-    // 2. ping2 – Quick speed
+    // 2. ping2 – UPDATED output format
     {
         name: 'ping2',
         isPrefixless: false,
@@ -141,35 +165,54 @@ module.exports = [
             const jid = msg.key.remoteJid;
             const receivedTime = msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now();
             const latency = Date.now() - receivedTime;
-            const speed = latency * 100;
-            const response = `⨳ Limitless-MD speed: ${toBoldItalic(speed + 'ms')}`;
+            // New format: "> $botspeed *100"
+            const response = `> ${latency}ms *100`;
             await sock.sendMessage(jid, { text: response });
         }
     },
 
-    // 3. .vv – Decrypt view-once in chat
+    // 3. .vv – with diagnostic logs
     {
         name: '.vv',
         isPrefixless: false,
         execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
             const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
+            console.log('[VV] Raw quoted message:', JSON.stringify(quotedMsg, null, 2));
+
             if (!quotedMsg) {
                 await sock.sendMessage(jid, { text: '❌ Reply to a view‑once message.' });
                 return;
             }
-            let viewOnce = quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage;
+
+            const rawQuoted = getRawMessage(quotedMsg);
+            console.log('[VV] After unwrap:', JSON.stringify(rawQuoted, null, 2));
+
+            if (!rawQuoted) {
+                await sock.sendMessage(jid, { text: '❌ Could not parse the quoted message.' });
+                return;
+            }
+
+            const viewOnce = rawQuoted.viewOnceMessageV2 || rawQuoted.viewOnceMessage;
+            console.log('[VV] viewOnce object:', viewOnce);
+
             if (!viewOnce) {
                 await sock.sendMessage(jid, { text: '❌ The replied message is not a view‑once message.' });
                 return;
             }
-            const mediaMsg = viewOnce.message || viewOnce;
+
+            const mediaMsg = getRawMessage(viewOnce);
+            console.log('[VV] mediaMsg (inner):', mediaMsg);
+
             if (!mediaMsg) {
-                await sock.sendMessage(jid, { text: '❌ Could not extract media.' });
+                await sock.sendMessage(jid, { text: '❌ Could not extract media from view‑once.' });
                 return;
             }
+
             try {
-                const buffer = await sock.downloadMediaMessage(mediaMsg);
+                // Pass the entire viewOnce object to downloadMediaMessage
+                const buffer = await sock.downloadMediaMessage(viewOnce);
                 const type = Object.keys(mediaMsg)[0];
                 let sendContent = {};
                 if (type === 'imageMessage') {
@@ -183,35 +226,53 @@ module.exports = [
                 }
                 await sock.sendMessage(jid, sendContent);
             } catch (error) {
-                console.error('View-once error:', error);
+                console.error('[VV] Download error:', error);
                 await sock.sendMessage(jid, { text: '❌ Failed to decrypt. Error: ' + error.message });
             }
         }
     },
 
-    // 4. .vv2 – Decrypt view-once to DM
+    // 4. .vv2 – with diagnostic logs (identical logic, but sends to DM)
     {
         name: '.vv2',
         isPrefixless: false,
         execute: async (sock, msg, args) => {
             const sender = msg.key.participant || msg.key.remoteJid;
             const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
+            console.log('[VV2] Raw quoted message:', JSON.stringify(quotedMsg, null, 2));
+
             if (!quotedMsg) {
                 await sock.sendMessage(sender, { text: '❌ Reply to a view‑once message.' });
                 return;
             }
-            let viewOnce = quotedMsg.viewOnceMessageV2 || quotedMsg.viewOnceMessage;
+
+            const rawQuoted = getRawMessage(quotedMsg);
+            console.log('[VV2] After unwrap:', JSON.stringify(rawQuoted, null, 2));
+
+            if (!rawQuoted) {
+                await sock.sendMessage(sender, { text: '❌ Could not parse the quoted message.' });
+                return;
+            }
+
+            const viewOnce = rawQuoted.viewOnceMessageV2 || rawQuoted.viewOnceMessage;
+            console.log('[VV2] viewOnce object:', viewOnce);
+
             if (!viewOnce) {
                 await sock.sendMessage(sender, { text: '❌ The replied message is not a view‑once message.' });
                 return;
             }
-            const mediaMsg = viewOnce.message || viewOnce;
+
+            const mediaMsg = getRawMessage(viewOnce);
+            console.log('[VV2] mediaMsg (inner):', mediaMsg);
+
             if (!mediaMsg) {
-                await sock.sendMessage(sender, { text: '❌ Could not extract media.' });
+                await sock.sendMessage(sender, { text: '❌ Could not extract media from view‑once.' });
                 return;
             }
+
             try {
-                const buffer = await sock.downloadMediaMessage(mediaMsg);
+                const buffer = await sock.downloadMediaMessage(viewOnce);
                 const type = Object.keys(mediaMsg)[0];
                 let sendContent = {};
                 if (type === 'imageMessage') {
@@ -225,13 +286,14 @@ module.exports = [
                 }
                 await sock.sendMessage(sender, sendContent);
             } catch (error) {
-                console.error('View-once error:', error);
+                console.error('[VV2] Download error:', error);
                 await sock.sendMessage(sender, { text: '❌ Failed to decrypt. Error: ' + error.message });
             }
         }
     },
 
-    // 5. getpp – Get profile picture
+    // ... (the rest of the commands remain unchanged)
+    // 5. getpp
     {
         name: 'getpp',
         isPrefixless: false,
@@ -266,7 +328,7 @@ module.exports = [
         }
     },
 
-    // 6. setpp – Update bot profile picture
+    // 6. setpp
     {
         name: 'setpp',
         isPrefixless: false,
@@ -293,7 +355,7 @@ module.exports = [
         }
     },
 
-    // 7. .s – Convert media to sticker
+    // 7. .s
     {
         name: '.s',
         isPrefixless: false,
@@ -328,7 +390,7 @@ module.exports = [
         }
     },
 
-    // 8. .take – Change sticker author
+    // 8. .take
     {
         name: '.take',
         isPrefixless: false,
@@ -364,7 +426,7 @@ module.exports = [
         }
     },
 
-    // 9. delete / del / dlt – Delete messages with timer
+    // 9. delete
     {
         name: 'delete',
         isPrefixless: false,
@@ -409,18 +471,17 @@ module.exports = [
         }
     },
 
-    // 10. del – alias for delete
+    // 10. del (alias)
     {
         name: 'del',
         isPrefixless: false,
         execute: async (sock, msg, args) => {
-            // Reuse delete command logic
             const delCmd = module.exports.find(cmd => cmd.name === 'delete');
             if (delCmd) await delCmd.execute(sock, msg, args);
         }
     },
 
-    // 11. dlt – alias for delete
+    // 11. dlt (alias)
     {
         name: 'dlt',
         isPrefixless: false,
@@ -430,7 +491,7 @@ module.exports = [
         }
     },
 
-    // 12. uptime – Show bot uptime
+    // 12. uptime
     {
         name: 'uptime',
         isPrefixless: false,
@@ -443,7 +504,7 @@ module.exports = [
         }
     },
 
-    // 13. .alive – Set or display alive message
+    // 13. .alive
     {
         name: '.alive',
         isPrefixless: false,
@@ -496,7 +557,7 @@ module.exports = [
         }
     },
 
-    // 14. .crop – Crop media to sticker
+    // 14. .crop
     {
         name: '.crop',
         isPrefixless: false,
@@ -538,7 +599,7 @@ module.exports = [
         }
     },
 
-    // 15. .url – Upload to catbox.moe
+    // 15. .url
     {
         name: '.url',
         isPrefixless: false,
@@ -572,7 +633,7 @@ module.exports = [
         }
     },
 
-    // 16. .toaudio – Convert video to MP3
+    // 16. .toaudio
     {
         name: '.toaudio',
         isPrefixless: false,
@@ -614,7 +675,7 @@ module.exports = [
         }
     },
 
-    // 17. .tts – Text-to-speech
+    // 17. .tts
     {
         name: '.tts',
         isPrefixless: false,
