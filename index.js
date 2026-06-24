@@ -1,5 +1,4 @@
 // index.js – Bleach Edition (The Final Incantation)
-require('dotenv').config();
 const { startBot } = require('./pair');
 
 // ─── TEMPORARY LOG CAPTURE ──────────────────────────────────────
