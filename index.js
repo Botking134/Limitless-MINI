@@ -19,6 +19,9 @@ console.log = (...a) => { pushLog('INFO', a); origLog(...a); };
 console.warn = (...a) => { pushLog('WARN', a); origWarn(...a); };
 console.error = (...a) => { pushLog('ERROR', a); origError(...a); };
 
+// ─── SET BOT START TIME (for uptime) ──────────────────────────
+global.botStartTime = Date.now();
+
 // ─── IGNITION ──────────────────────────────────────────────────
 console.clear();
 
