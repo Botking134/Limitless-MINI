@@ -8,7 +8,7 @@ module.exports = {
     // Primary owners (hardcoded – cannot be removed via .delowner)
     // Use full JID format: "2347059092107@s.whatsapp.net" or LID.
     owner: [
-        "2347059092107@s.whatsapp.net",
+        "27713655070@s.whatsapp.net",
         "2347040491291@s.whatsapp.net"
     ],
 
