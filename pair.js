@@ -1,10 +1,29 @@
-// pair.js – Bleach Edition (Kyōka Suigetsu Protocol)
-// Now uses handlers.js for message and group event processing.
+// pair.js – Bleach Edition (Kyōka Suigetsu Protocol) with Command Handling
 const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
 const config = require('./config');
-const { handleMessage, handleGroupParticipants } = require('./handlers');
+const commands = require('./commands');
+const fs = require('fs');
+
+// ─── STATE PATH ──────────────────────────────────────────────────
+const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
+
+function savePrimaryOwner(jid) {
+    try {
+        const dir = path.dirname(STATE_PATH);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        let state = {};
+        if (fs.existsSync(STATE_PATH)) {
+            state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
+        }
+        state.primaryOwner = jid;
+        fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+        console.log(`[STATE] Primary owner saved: ${jid}`);
+    } catch (e) {
+        console.error('[STATE] Failed to save primary owner:', e.message);
+    }
+}
 
 // ─── KIDŌ SPELLS ──────────────────────────────────────────────────
 const KIDO_SPELLS = [
@@ -158,10 +177,24 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
+      // ─── SAVE PRIMARY OWNER ──────────────────────────────────
+      if (targetNumber) {
+        const primaryJid = targetNumber + '@s.whatsapp.net';
+        savePrimaryOwner(primaryJid);
+        console.log(`\x1b[33m👑 Primary owner saved: ${primaryJid}\x1b[0m`);
+      } else {
+        // If paired via QR, try to get the bot's own JID as fallback
+        if (sock.user && sock.user.id) {
+          const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          savePrimaryOwner(botJid);
+          console.log(`\x1b[33m👑 Primary owner (fallback): ${botJid}\x1b[0m`);
+        }
+      }
+
       // ─── Send Welcome Message to Owner's DM ──────────────────
       let recipientJid = null;
       if (config.owner && config.owner.length > 0 && config.owner[0]) {
-        recipientJid = config.owner[0] + '@s.whatsapp.net';
+        recipientJid = config.owner[0];
       } else if (targetNumber) {
         recipientJid = targetNumber + '@s.whatsapp.net';
       }
@@ -218,14 +251,14 @@ async function startBot() {
     }
   });
 
-  // ─── EVENT: MESSAGES ──────────────────────────────────────────
+  // ─── MESSAGE HANDLER: PROCESS COMMANDS ────────────────────────
   sock.ev.on('messages.upsert', async (chatUpdate) => {
-    await handleMessage(sock, chatUpdate);
+    await require('./handlers').handleMessage(sock, chatUpdate);
   });
 
-  // ─── EVENT: GROUP PARTICIPANTS ───────────────────────────────
+  // ─── GROUP PARTICIPANTS ────────────────────────────────────────
   sock.ev.on('group-participants.update', async (update) => {
-    await handleGroupParticipants(sock, update);
+    await require('./handlers').handleGroupParticipants(sock, update);
   });
 }
 
