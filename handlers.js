@@ -1,5 +1,6 @@
 /**
- * handlers.js – Centralized message and event handling with permission context
+ * handlers.js – Centralized message and event handling
+ * Includes: Command dispatch, gclog, welcome/goodbye, auto-react, owner mention reaction
  */
 
 const config = require('./config');
@@ -14,76 +15,447 @@ function loadState() {
     try {
         if (fs.existsSync(STATE_PATH)) {
             const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
-            if (data.secondaryOwners) config.secondaryOwners = data.secondaryOwners;
-            if (data.sudo) config.sudo = data.sudo;
-            if (data.primaryOwner) config.primaryOwner = data.primaryOwner;
-            if (data.prefix !== undefined) config.prefix = data.prefix;
-            if (data.isPublic !== undefined) config.isPublic = data.isPublic;
-            if (data.autoReact) config.autoReact = data.autoReact;
-            if (data.antidelete) config.antidelete = data.antidelete;
-            if (data.antiviewonce) config.antiviewonce = data.antiviewonce;
-            if (data.antibug) config.antibug = data.antibug;
-            if (data.antipm) config.antipm = data.antipm;
-            if (data.statusEmoji) config.statusEmoji = data.statusEmoji;
-            if (data.autovs) config.autovs = data.autovs;
-            if (data.autors) config.autors = data.autors;
-            if (data.stickerCommands) config.stickerCommands = data.stickerCommands;
-            if (data.presence) config.presence = data.presence;
+            const keys = [
+                'secondaryOwners', 'sudo', 'primaryOwner', 'prefix', 'isPublic',
+                'autoReact', 'antidelete', 'antiviewonce', 'antibug', 'antipm',
+                'statusEmoji', 'autovs', 'autors', 'stickerCommands', 'presence',
+                'aizenChats', 'jarvisChats', 'welcome', 'goodbye', 'gcalerts',
+                'gclogActive', 'conversationLogs', 'antilink', 'antigm', 'antispam',
+                'antigcstatus', 'antipromote', 'antidemote', 'warns', 'warnThreshold',
+                'dailyActivity', 'totalMessages'
+            ];
+            for (const key of keys) {
+                if (data[key] !== undefined) config[key] = data[key];
+            }
         }
-    } catch (e) {
-        console.warn('[STATE] Failed to load state:', e.message);
-    }
+    } catch (e) { /* ignore */ }
 }
 loadState();
 
+// ─── SAVE STATE ──────────────────────────────────────────────────
+function saveState() {
+    try {
+        const dir = path.dirname(STATE_PATH);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        let state = {};
+        const keys = [
+            'secondaryOwners', 'sudo', 'primaryOwner', 'prefix', 'isPublic',
+            'autoReact', 'antidelete', 'antiviewonce', 'antibug', 'antipm',
+            'statusEmoji', 'autovs', 'autors', 'stickerCommands', 'presence',
+            'aizenChats', 'jarvisChats', 'welcome', 'goodbye', 'gcalerts',
+            'gclogActive', 'conversationLogs', 'antilink', 'antigm', 'antispam',
+            'antigcstatus', 'antipromote', 'antidemote', 'warns', 'warnThreshold',
+            'dailyActivity', 'totalMessages'
+        ];
+        for (const key of keys) {
+            if (config[key] !== undefined) state[key] = config[key];
+        }
+        fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+    } catch (e) {
+        console.error('[STATE] Save failed:', e.message);
+    }
+}
+global.saveState = saveState;
+
+// ─── HELPERS ──────────────────────────────────────────────────────
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function normalizeToJid(input) {
+    if (!input) return '';
+    const clean = input.replace(/:[\d]+@/, '@');
+    if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
+    const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
+    return raw ? `${raw}@s.whatsapp.net` : '';
+}
+
+function getRawMessage(message) {
+    if (!message) return null;
+    if (message.ephemeralMessage?.message) return getRawMessage(message.ephemeralMessage.message);
+    if (message.viewOnceMessage?.message) return getRawMessage(message.viewOnceMessage.message);
+    if (message.viewOnceMessageV2?.message) return getRawMessage(message.viewOnceMessageV2.message);
+    if (message.viewOnceMessageV2Extension?.message) return getRawMessage(message.viewOnceMessageV2Extension.message);
+    if (message.documentWithCaptionMessage?.message) return getRawMessage(message.documentWithCaptionMessage.message);
+    return message;
+}
+
+function getMentionedJids(msg) {
+    const raw = getRawMessage(msg.message);
+    const ctx = raw?.contextInfo || raw?.extendedTextMessage?.contextInfo;
+    return ctx?.mentionedJid || [];
+}
+
+// ─── EMOJI MAP FOR AUTO-REACT ──────────────────────────────────
+const EMOJI_MAP = {
+    // Core
+    ping: '🏓',
+    ping2: '⚡',
+    vv: '👁️',
+    vv2: '📩',
+    getpp: '🖼️',
+    setpp: '🔄',
+    s: '🎨',
+    take: '✏️',
+    delete: '🗑️',
+    del: '🗑️',
+    dlt: '🗑️',
+    uptime: '⏱️',
+    alive: '💚',
+    crop: '✂️',
+    url: '🔗',
+    toaudio: '🎧',
+    tts: '🗣️',
+
+    // Owner
+    setprefix: '⚙️',
+    autoreact: '🤖',
+    speed: '🚀',
+    gitclone: '📦',
+    addnote: '📝',
+    delnote: '❌',
+    getnote: '📄',
+    getnotes: '📋',
+    notes: '📚',
+    reminder: '⏰',
+    remind: '🔔',
+    autotyping: '⌨️',
+    autorecording: '🎙️',
+    alwaysonline: '🌐',
+    autoread: '👀',
+    presence: '📊',
+    antidelete: '🛡️',
+    antiviewonce: '🛡️',
+    antibug: '🛡️',
+    block: '🚫',
+    unblock: '✅',
+    archive: '📂',
+    unarchive: '📂',
+    clear: '🧹',
+    antipm: '🛡️',
+    update: '🔄',
+    statusemoji: '😊',
+    autovs: '👁️',
+    autors: '🤖',
+    ss: '📸',
+    device: '📱',
+    spam: '💬',
+    setcmd: '🏷️',
+    delcmd: '🏷️',
+    '🥷🏼': '🥷🏼',
+    fw: '📨',
+    mode: '🔓',
+    owners: '👑',
+    setsudo: '👑',
+    setowner: '👑',
+    delsudo: '👑',
+    delowner: '👑',
+    restart: '🔄',
+    shutdown: '💤',
+    diagnose: '🔍',
+    logs: '📋',
+
+    // AI
+    ai: '🧠',
+    groq: '🧠',
+    aizen: '🌀',
+    aizen_chat: '🌀',
+    jarvis: '🤖',
+    jarvis_chat: '🤖',
+    debug: '🛠️',
+    summon: '🔮',
+    read: '👁️',
+    imagine: '🎨',
+    say: '🗣️',
+
+    // Group
+    welcome: '👋',
+    goodbye: '👋',
+    setwelcome: '✏️',
+    setgoodbye: '✏️',
+    gcalerts: '🔔',
+    gclog: '📊',
+    kickall: '🦶',
+    stopkickall: '🛑',
+    kick: '🦶',
+    join: '➕',
+    exit: '🚪',
+    leave: '🚪',
+    togcstatus: '📡',
+    togcjid: '📡',
+    getgpp: '🖼️',
+    setgpp: '🔄',
+    poll: '📊',
+    tag: '🏷️',
+    spamtag: '💬',
+    tagall: '🏷️',
+    mute: '🔇',
+    unmute: '🔊',
+    open: '🔓',
+    close: '🔒',
+    lock: '🔒',
+    unlock: '🔓',
+    promote: '👑',
+    demote: '👑',
+    link: '🔗',
+    invite: '🔗',
+    gclink: '🔗',
+    admins: '👑',
+    jid: '🆔',
+    gcjid: '🆔',
+    active: '✅',
+    inactive: '❌',
+    msgs: '💬',
+    antilink: '🛡️',
+    antigm: '🛡️',
+    antispam: '🛡️',
+    antigcstatus: '🛡️',
+    antipromote: '🛡️',
+    antidemote: '🛡️',
+    warn: '⚠️',
+    silence: '🔇',
+    silence_ans: '🔇',
+    unsilence: '🔊',
+    delspam: '🗑️',
+
+    // Download (dl.js – reserved)
+    fb: '📘',
+    facebook: '📘',
+    tt: '🎵',
+    tiktok: '🎵',
+    yt: '▶️',
+    youtube: '▶️',
+    ig: '📸',
+    instagram: '📸',
+    x: '🐦',
+    xdl: '🐦',
+    spotify: '🎵',
+    pinterest: '📌',
+    mediafire: '📦',
+    gdrive: '☁️',
+    obf: '🔒',
+    song: '🎵',
+    play: '▶️',
+    tgs: '📦',
+    apk: '📱',
+    web: '🌐',
+    lyrics: '📝',
+    img: '🖼️',
+    xvid: '🎥',
+    shazam: '🎶'
+};
+
+// ─── MESSAGE HANDLER ─────────────────────────────────────────────
 async function handleMessage(sock, chatUpdate) {
     const msg = chatUpdate.messages[0];
     if (!msg || msg.key.fromMe) return;
 
+    // Extract text
     let text = '';
     if (msg.message?.conversation) {
         text = msg.message.conversation;
     } else if (msg.message?.extendedTextMessage?.text) {
         text = msg.message.extendedTextMessage.text;
     } else {
-        return;
+        text = '[Media]';
     }
 
+    const jid = msg.key.remoteJid;
+    const sender = msg.key.participant || msg.key.remoteJid || '';
+    const senderNumber = sender.split('@')[0];
+
+    // ─── GCLOG RECORDING ────────────────────────────────────────
+    if (jid.endsWith('@g.us') && config.gclogActive?.[jid]) {
+        if (!config.conversationLogs) config.conversationLogs = {};
+        if (!config.conversationLogs[jid]) config.conversationLogs[jid] = [];
+        config.conversationLogs[jid].push({
+            time: Date.now(),
+            sender: normalizeToJid(sender),
+            text: text
+        });
+        if (config.conversationLogs[jid].length % 10 === 0) saveState();
+    }
+
+    // ─── OWNER MENTION REACTION ─────────────────────────────────
+    const mentioned = getMentionedJids(msg);
+    const allOwners = [
+        ...(config.owner || []),
+        config.primaryOwner || '',
+        ...(config.secondaryOwners || [])
+    ].filter(Boolean).map(j => normalizeToJid(j));
+    let ownerMentioned = false;
+    for (const m of mentioned) {
+        const nm = normalizeToJid(m);
+        if (allOwners.includes(nm)) { ownerMentioned = true; break; }
+    }
+    if (ownerMentioned && !msg.key.fromMe) {
+        const emojis = ['3⃣', '2⃣', '1⃣', '0⃣', '⛩️'];
+        for (const emoji of emojis) {
+            try {
+                await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
+                await delay(800);
+            } catch (e) { /* ignore */ }
+        }
+    }
+
+    // ─── COMMAND DISPATCH ──────────────────────────────────────
     const args = text.trim().split(/\s+/);
     const commandName = args.shift().toLowerCase();
 
     const handler = commands[commandName];
     if (handler && typeof handler === 'function') {
-        // ─── PERMISSION CONTEXT ──────────────────────────────────
-        const sender = msg.key.participant || msg.key.remoteJid || '';
-        const senderNumber = sender.split('@')[0];
-
-        // Primary owners: hardcoded config.owner + dynamic primaryOwner from state
-        const hardcodedOwners = config.owner || [];
+        const primaryOwners = config.owner || [];
         const primaryOwner = config.primaryOwner || '';
         const secondaryOwners = config.secondaryOwners || [];
         const sudoList = config.sudo || [];
 
-        const isPrimaryOwner = hardcodedOwners.includes(sender) || sender === primaryOwner;
+        const isPrimaryOwner = primaryOwners.includes(sender) || sender === primaryOwner;
         const isOwner = isPrimaryOwner || secondaryOwners.includes(sender);
         const isSudo = isOwner || sudoList.includes(sender);
 
-        // Only log when a command is executed
         console.log(`[CMD] Executing: ${commandName} (isOwner: ${isOwner}, isSudo: ${isSudo})`);
 
         try {
             await handler(sock, msg, args, { isOwner, isSudo, isPrimaryOwner, sender, senderNumber });
+
+            // ─── AUTO-REACT (cmd mode) ──────────────────────────
+            if (config.autoReact === 'cmd') {
+                const emoji = EMOJI_MAP[commandName];
+                if (emoji) {
+                    try {
+                        await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
+                    } catch (e) { /* ignore */ }
+                }
+            }
         } catch (err) {
             console.error(`[CMD] Error in ${commandName}:`, err);
-            const jid = msg.key.remoteJid;
             await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
         }
     }
-    // No log for unhandled commands – kept silent.
 }
 
+// ─── GROUP PARTICIPANTS HANDLER (welcome/goodbye) ──────────────
 async function handleGroupParticipants(sock, update) {
-    // Placeholder
+    const jid = update.id;
+    const participants = update.participants;
+    const action = update.action;
+
+    if (!jid.endsWith('@g.us')) return;
+
+    // Welcome
+    if (action === 'add') {
+        const welcomeConfig = config.welcome?.[jid];
+        if (welcomeConfig?.active) {
+            const msgTemplate = welcomeConfig.text || 'Welcome @user!';
+            const images = welcomeConfig.images || [];
+            const groupMetadata = await sock.groupMetadata(jid);
+            const groupName = groupMetadata.subject || 'Group';
+            const groupSize = groupMetadata.participants.length;
+
+            for (const participant of participants) {
+                const userMention = `@${participant.split('@')[0]}`;
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', { timeZone: 'Africa/Lagos', hour12: true });
+                const dateStr = now.toLocaleDateString('en-US', { timeZone: 'Africa/Lagos' });
+
+                let finalText = msgTemplate
+                    .replace(/@user/g, userMention)
+                    .replace(/@name/g, groupName)
+                    .replace(/@size/g, groupSize)
+                    .replace(/@time/g, timeStr)
+                    .replace(/@date/g, dateStr);
+
+                let imageUrl = null;
+                if (images.length > 0) {
+                    imageUrl = images[Math.floor(Math.random() * images.length)];
+                }
+
+                try {
+                    if (imageUrl) {
+                        const isGif = imageUrl.toLowerCase().endsWith('.gif');
+                        if (isGif) {
+                            await sock.sendMessage(jid, {
+                                video: { url: imageUrl },
+                                gifPlayback: true,
+                                caption: finalText,
+                                mentions: [participant]
+                            });
+                        } else {
+                            await sock.sendMessage(jid, {
+                                image: { url: imageUrl },
+                                caption: finalText,
+                                mentions: [participant]
+                            });
+                        }
+                    } else {
+                        await sock.sendMessage(jid, {
+                            text: finalText,
+                            mentions: [participant]
+                        });
+                    }
+                } catch (err) {
+                    console.error('Welcome send error:', err);
+                }
+            }
+        }
+    }
+
+    // Goodbye
+    if (action === 'remove') {
+        const goodbyeConfig = config.goodbye?.[jid];
+        if (goodbyeConfig?.active) {
+            const msgTemplate = goodbyeConfig.text || 'Goodbye @user!';
+            const images = goodbyeConfig.images || [];
+            const groupMetadata = await sock.groupMetadata(jid);
+            const groupName = groupMetadata.subject || 'Group';
+            const groupSize = groupMetadata.participants.length;
+
+            for (const participant of participants) {
+                const userMention = `@${participant.split('@')[0]}`;
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', { timeZone: 'Africa/Lagos', hour12: true });
+                const dateStr = now.toLocaleDateString('en-US', { timeZone: 'Africa/Lagos' });
+
+                let finalText = msgTemplate
+                    .replace(/@user/g, userMention)
+                    .replace(/@name/g, groupName)
+                    .replace(/@size/g, groupSize)
+                    .replace(/@time/g, timeStr)
+                    .replace(/@date/g, dateStr);
+
+                let imageUrl = null;
+                if (images.length > 0) {
+                    imageUrl = images[Math.floor(Math.random() * images.length)];
+                }
+
+                try {
+                    if (imageUrl) {
+                        const isGif = imageUrl.toLowerCase().endsWith('.gif');
+                        if (isGif) {
+                            await sock.sendMessage(jid, {
+                                video: { url: imageUrl },
+                                gifPlayback: true,
+                                caption: finalText,
+                                mentions: [participant]
+                            });
+                        } else {
+                            await sock.sendMessage(jid, {
+                                image: { url: imageUrl },
+                                caption: finalText,
+                                mentions: [participant]
+                            });
+                        }
+                    } else {
+                        await sock.sendMessage(jid, {
+                            text: finalText,
+                            mentions: [participant]
+                        });
+                    }
+                } catch (err) {
+                    console.error('Goodbye send error:', err);
+                }
+            }
+        }
+    }
 }
 
 module.exports = {
