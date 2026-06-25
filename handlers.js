@@ -1,12 +1,23 @@
 /**
  * handlers.js – Centralized message and event handling
- * Includes: Command dispatch, gclog, welcome/goodbye, auto-react, owner mention reaction
+ * Includes: Command dispatch, gclog, welcome/goodbye, auto-react, owner mention reaction, button labels, bankai selection
  */
 
 const config = require('./config');
 const commands = require('./commands');
 const fs = require('fs');
 const path = require('path');
+const bankaiPlugin = require('./plugins/bankai'); // ADDED
+
+// ─── BUTTON LABEL TO COMMAND MAPPING ──────────────────────────
+const BUTTON_LABEL_MAP = {
+    "🛡️ Core": "menu_core",
+    "👑 Owner": "menu_owner",
+    "🧠 AI": "menu_ai",
+    "👥 Group": "menu_group",
+    "📥 Download": "menu_dl",
+    "🔙 Back": "menu_back"
+};
 
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
@@ -217,7 +228,7 @@ const EMOJI_MAP = {
     unsilence: '🔊',
     delspam: '🗑️',
 
-    // Download (dl.js – reserved)
+    // Download
     fb: '📘',
     facebook: '📘',
     tt: '🎵',
@@ -297,9 +308,27 @@ async function handleMessage(sock, chatUpdate) {
         }
     }
 
-    // ─── COMMAND DISPATCH ──────────────────────────────────────
-    const args = text.trim().split(/\s+/);
-    const commandName = args.shift().toLowerCase();
+    // ─── BANKAI SELECTION HANDLER (if it's a reply to a bankai list) ─
+    if (msg.message?.extendedTextMessage?.contextInfo?.stanzaId) {
+        const handled = await bankaiPlugin.handleBankaiSelection(sock, msg);
+        if (handled) return; // handled by bankai plugin
+    }
+
+    // ─── BUTTON LABEL MAPPING ──────────────────────────────────
+    const trimmedText = text.trim();
+    let commandName = '';
+    let args = [];
+    if (BUTTON_LABEL_MAP[trimmedText]) {
+        // It's a button press
+        commandName = BUTTON_LABEL_MAP[trimmedText];
+        args = [];
+        console.log(`[CMD] Button pressed: "${trimmedText}" → ${commandName}`);
+    } else {
+        // Normal command parsing
+        const parts = trimmedText.split(/\s+/);
+        commandName = parts.shift().toLowerCase();
+        args = parts;
+    }
 
     const handler = commands[commandName];
     if (handler && typeof handler === 'function') {
@@ -330,6 +359,8 @@ async function handleMessage(sock, chatUpdate) {
             console.error(`[CMD] Error in ${commandName}:`, err);
             await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
         }
+    } else {
+        // No handler found – ignore
     }
 }
 
@@ -341,7 +372,6 @@ async function handleGroupParticipants(sock, update) {
 
     if (!jid.endsWith('@g.us')) return;
 
-    // Welcome
     if (action === 'add') {
         const welcomeConfig = config.welcome?.[jid];
         if (welcomeConfig?.active) {
@@ -399,7 +429,6 @@ async function handleGroupParticipants(sock, update) {
         }
     }
 
-    // Goodbye
     if (action === 'remove') {
         const goodbyeConfig = config.goodbye?.[jid];
         if (goodbyeConfig?.active) {
