@@ -1,5 +1,35 @@
 // index.js – Bleach Edition (The Final Incantation)
 const { startBot } = require('./pair');
+const config = require('./config');
+const fs = require('fs');
+const path = require('path');
+
+// ─── LOAD PERSISTENT STATE INTO CONFIG ─────────────────────────
+const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
+try {
+    if (fs.existsSync(STATE_PATH)) {
+        const state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
+        // Merge dynamic settings into config
+        if (state.secondaryOwners) config.secondaryOwners = state.secondaryOwners;
+        if (state.sudo) config.sudo = state.sudo;
+        if (state.prefix !== undefined) config.prefix = state.prefix;
+        if (state.isPublic !== undefined) config.isPublic = state.isPublic;
+        if (state.autoReact) config.autoReact = state.autoReact;
+        if (state.antidelete) config.antidelete = state.antidelete;
+        if (state.antiviewonce) config.antiviewonce = state.antiviewonce;
+        if (state.antibug) config.antibug = state.antibug;
+        if (state.antipm) config.antipm = state.antipm;
+        if (state.statusEmoji) config.statusEmoji = state.statusEmoji;
+        if (state.autovs) config.autovs = state.autovs;
+        if (state.autors) config.autors = state.autors;
+        if (state.stickerCommands) config.stickerCommands = state.stickerCommands;
+        // presence settings
+        if (state.presence) config.presence = state.presence;
+        console.log('[STATE] Loaded dynamic settings into config.');
+    }
+} catch (e) {
+    console.warn('[STATE] Failed to load state:', e.message);
+}
 
 // ─── TEMPORARY LOG CAPTURE ──────────────────────────────────────
 global.recentLogs = global.recentLogs || [];
