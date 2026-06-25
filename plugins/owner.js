@@ -873,21 +873,29 @@ module.exports = [
         }
     },
 
-    // 34. owners
-    {
-        name: 'owners',
-        isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner }) => {
-            const jid = msg.key.remoteJid;
-            if (!isOwner) return;
-            const state = readState();
-            const primary = config.owner || [];
-            const secondary = state.secondaryOwners || [];
-            const sudo = state.sudo || [];
-            let text = '👑 *Owners & Sudo*\nPrimary: ' + primary.join(', ') + '\nSecondary: ' + secondary.join(', ') + '\nSudo: ' + sudo.join(', ');
-            await sock.sendMessage(jid, { text });
-        }
-    },
+    
+{
+    name: 'owners',
+    isPrefixless: false,
+    execute: async (sock, msg, args, { isOwner }) => {
+        const jid = msg.key.remoteJid;
+        if (!isOwner) return;
+        const state = readState();
+        const hardcoded = config.owner || [];
+        const primary = state.primaryOwner || 'None';
+        const secondary = state.secondaryOwners || [];
+        const sudo = state.sudo || [];
+
+        let text = '👑 *OWNERS & SUDO LIST*\n━━━━━━━━━━━━━━━━━━━\n\n';
+        text += `👤 *Primary Owner:* ${primary}\n`;
+        text += `📌 *Hardcoded Owners:* ${hardcoded.join(', ') || 'None'}\n`;
+        text += `👥 *Secondary Owners:* ${secondary.join(', ') || 'None'}\n`;
+        text += `🛡️ *Sudo Users:* ${sudo.join(', ') || 'None'}`;
+
+        const mentions = [...hardcoded, primary, ...secondary, ...sudo].filter(Boolean);
+        await sock.sendMessage(jid, { text, mentions });
+    }
+}, 
 
     // 35. setsudo
     {
@@ -942,22 +950,36 @@ module.exports = [
         }
     },
 
-    // 38. delowner
     {
-        name: 'delowner',
-        isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner }) => {
-            const jid = msg.key.remoteJid;
-            if (!isOwner) return;
-            const target = parseTarget(msg, args);
-            if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
-            const state = readState();
-            if (!state.secondaryOwners || !state.secondaryOwners.includes(target)) return await sock.sendMessage(jid, { text: '⚠️ Not a secondary owner.' });
-            state.secondaryOwners = state.secondaryOwners.filter(id => id !== target);
-            writeState(state);
-            await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} removed from secondary owners.` });
+    name: 'delowner',
+    isPrefixless: false,
+    execute: async (sock, msg, args, { isOwner }) => {
+        const jid = msg.key.remoteJid;
+        if (!isOwner) return;
+        const target = parseTarget(msg, args);
+        if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
+
+        const state = readState();
+        const primary = state.primaryOwner || '';
+        const hardcoded = config.owner || [];
+
+        // Block removal if target is primary or hardcoded
+        if (target === primary) {
+            return await sock.sendMessage(jid, { text: '❌ Cannot remove the primary owner (the one who paired the bot).' });
         }
-    },
+        if (hardcoded.includes(target)) {
+            return await sock.sendMessage(jid, { text: '❌ Cannot remove a hardcoded primary owner.' });
+        }
+
+        if (!state.secondaryOwners || !state.secondaryOwners.includes(target)) {
+            return await sock.sendMessage(jid, { text: '⚠️ Not a secondary owner.' });
+        }
+
+        state.secondaryOwners = state.secondaryOwners.filter(id => id !== target);
+        writeState(state);
+        await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} removed from secondary owners.` });
+    }
+}, 
 
     // 39. restart
     {
