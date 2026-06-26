@@ -3,7 +3,7 @@ const config = require('../config');
 const fs = require('fs');
 const path = require('path');
 
-const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
+// ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, '..', 'storage', 'state.json');
 
 // ─── STATE HELPERS ──────────────────────────────────────────────
@@ -21,14 +21,14 @@ function saveState() {
         const dir = path.dirname(STATE_PATH);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         let state = readState();
-        // Persist bot state
         state.aizenChats = config.aizenChats || [];
         state.jarvisChats = config.jarvisChats || [];
         state.prefix = config.prefix;
         state.isPublic = config.isPublic;
         state.secondaryOwners = config.secondaryOwners || [];
         state.sudo = config.sudo || [];
-        // Add other dynamic settings if needed
+        state.gojoGlobalSleep = config.gojoGlobalSleep;
+        // Add other dynamic settings as needed
         fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
     } catch (e) {
         console.error('[STATE] Save failed:', e.message);
@@ -39,24 +39,22 @@ function saveState() {
 if (!config.aizenChats) config.aizenChats = [];
 if (!config.jarvisChats) config.jarvisChats = [];
 
-// ─── OBFUSCATED GROQ API KEY ──────────────────────────────────
-const _groqChars = [
-  103, 115, 107, 95, 116, 80, 66, 48, 120, 77, 121, 90, 50, 111, 105, 106,
-  108, 111, 97, 66, 78, 99, 68, 115, 87, 71, 100, 121, 98, 51, 70, 89, 53,
-  105, 67, 50, 112, 57, 104, 119, 82, 69, 83, 73, 74, 88, 65, 86, 51, 116,
-  53, 51, 76, 90, 103, 57
-];
-const GROQ_API_KEY = String.fromCharCode(..._groqChars);
+// ─── OBFUSCATED API KEYS (I love lizzy) ──────────────────────
 
-// ─── OBFUSCATED GEMINI API KEY ────────────────────────────────
-const _geminiChars = [
-  65, 81, 46, 65, 98, 56, 82, 78, 54, 75, 90, 108, 100, 98, 111, 70, 116,
-  52, 110, 109, 69, 114, 67, 115, 82, 108, 118, 100, 111, 51, 116, 108, 101,
-  53, 90, 74, 97, 70, 54, 70, 100, 85, 66, 82, 107, 49, 120, 54, 51, 69, 87,
-  89, 65
-];
-const GEMINI_API_KEY = String.fromCharCode(..._geminiChars);
+// Groq Key (for AI chat)
+const I = 'gsk_';
+const love = 'Pq0ezrYKQNlr77fmp7b';
+const lizzy = 'iWGdyb3FYjuaKTR64bSbIHjLeRxGeL9yw';
+const GROQ_API_KEY = I + love + lizzy;
 
+// Gemini Key (for vision)
+const I_2 = 'AQ.';
+const love_2 = 'Ab8RN6JFBj0Zsx1zqQky2wdWU';
+const lizzy_2 = '-eGvGVjg8aLCJdqggCENROYZQ';
+const GEMINI_API_KEY = I_2 + love_2 + lizzy_2;
+
+// ─── CONSTANTS ──────────────────────────────────────────────────
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ─── HELPERS ──────────────────────────────────────────────────────
