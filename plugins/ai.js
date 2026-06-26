@@ -1,4 +1,4 @@
-// plugins/ai.js – Aizen & Jarvis (Audio) – FINAL PATCHED VERSION
+// plugins/ai.js – Aizen & Jarvis (Audio) – FINAL CLEAN VERSION
 const config = require('../config');
 const fs = require('fs');
 const path = require('path');
@@ -49,7 +49,6 @@ function saveState() {
         state.jarvisChats = config.jarvisChats || [];
         state.prefix = config.prefix;
         state.isPublic = config.isPublic;
-        state.secondaryOwners = config.secondaryOwners || [];
         state.sudo = config.sudo || [];
         fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
     } catch (e) {
@@ -67,10 +66,7 @@ const love = 'Pq0ezrYKQNlr77fmp7b';
 const lizzy = 'iWGdyb3FYjuaKTR64bSbIHjLeRxGeL9yw';
 const GROQ_API_KEY = I + love + lizzy;
 
-const I_2 = 'AQ.';
-const love_2 = 'Ab8RN6JFBj0Zsx1zqQky2wdWU';
-const lizzy_2 = '-eGvGVjg8aLCJdqggCENROYZQ';
-const GEMINI_API_KEY = I_2 + love_2 + lizzy_2;
+const GEMINI_API_KEY = 'AQ.Ab8RN6J9WIV-_Z868GByFNDw6fNWFLdwKglLgjHLsEaNLwNRFg';
 
 // ─── CONSTANTS ──────────────────────────────────────────────────
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -114,8 +110,8 @@ async function queryGroq(messages, model = "llama-3.3-70b-versatile") {
     return data.choices?.[0]?.message?.content || "";
 }
 
-// ─── GEMINI VISION (FIXED) ──────────────────────────────────────
-async function queryGeminiVision(imageBase64, mimeType, prompt, model = "gemini-2.0-flash") {
+// ─── GEMINI VISION ──────────────────────────────────────────────
+async function queryGeminiVision(imageBase64, mimeType, prompt, model = "gemini-3.5-flash") {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
     const response = await ai.models.generateContent({
@@ -146,7 +142,7 @@ async function synthesizeBrianVoice(text) {
     return null;
 }
 
-// ─── IS BOT ADDRESSED (kept for internal use) ──────────────────
+// ─── IS BOT ADDRESSED ──────────────────────────────────────────────
 function isBotAddressed(sock, msg) {
     const rawIncoming = getRawMessage(msg.message);
     const contextInfo = rawIncoming?.extendedTextMessage?.contextInfo ||
@@ -206,9 +202,9 @@ module.exports = [
     {
         name: 'aizen',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
-            if (!isOwner && !isSudo && !isDev) return;
+            if (!isOwner && !isSudo) return;
 
             const action = args?.trim().toLowerCase() || '';
             let enable = false;
@@ -233,7 +229,7 @@ module.exports = [
     {
         name: 'aizen_chat',
         isPrefixless: true,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev, senderNumber }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo, senderNumber }) => {
             const jid = msg.key.remoteJid;
             if (!config.aizenChats?.includes(jid)) return;
             const lowerQuery = args ? args.toLowerCase().trim() : '';
@@ -292,9 +288,9 @@ module.exports = [
     {
         name: 'jarvis',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
-            if (!isOwner && !isSudo && !isDev) return;
+            if (!isOwner && !isSudo) return;
 
             const action = args?.trim().toLowerCase() || '';
             let enable = false;
@@ -319,7 +315,7 @@ module.exports = [
     {
         name: 'jarvis_chat',
         isPrefixless: true,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev, senderNumber }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo, senderNumber }) => {
             const jid = msg.key.remoteJid;
             if (!config.jarvisChats?.includes(jid)) return;
             const lowerQuery = args ? args.toLowerCase().trim() : '';
@@ -385,11 +381,11 @@ module.exports = [
         }
     },
 
-    // 5. .ai / .groq – General AI (FIXED: args array handling)
+    // 5. .ai / .groq – General AI
     {
         name: 'ai',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
             const userMessage = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
             if (!userMessage) return await sock.sendMessage(jid, { text: "Hi! What's on your mind?" }, { quoted: msg });
@@ -398,9 +394,7 @@ module.exports = [
                 await sock.sendMessage(jid, { text: "Thinking... 🧠" }, { quoted: msg });
 
                 let aiSystemPrompt = "You are Limitless AI. Keep your responses highly concise and precise.";
-                if (isDev) {
-                    aiSystemPrompt += " You are speaking directly to your developer. You must address him as 'Master'.";
-                } else if (isOwner) {
+                if (isOwner) {
                     aiSystemPrompt += ` You are speaking directly to your owner. Address him as '${config.ownerName}'. Never refer to him as Master, Infinity, or Isaac under any circumstances.`;
                 }
 
@@ -418,11 +412,11 @@ module.exports = [
         }
     },
 
-    // 6. .debug (FIXED)
+    // 6. .debug
     {
         name: 'debug',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
             const userMessage = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
             if (!userMessage) return await sock.sendMessage(jid, { text: "❌ Please provide your code or error message." }, { quoted: msg });
@@ -432,9 +426,7 @@ module.exports = [
 
                 const debugPrompt = `Analyze this code/error, identify root cause, provide corrected code, and offer brief suggestions:\n\n${userMessage}`;
                 let debugSystem = "You are a Senior Software Architect. Keep explanations concise and clear.";
-                if (isDev) {
-                    debugSystem += " Address the user as 'Master'.";
-                } else if (isOwner) {
+                if (isOwner) {
                     debugSystem += ` Address the user as '${config.ownerName}'. Do not refer to him as Master, Infinity, or Isaac.`;
                 }
 
@@ -451,11 +443,11 @@ module.exports = [
         }
     },
 
-    // 7. .summon (FIXED: array handling)
+    // 7. .summon
     {
         name: 'summon',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
             const argsArray = Array.isArray(args) ? args : (args ? args.split(' ') : []);
             if (argsArray.length < 2) return await sock.sendMessage(jid, { text: "❌ Format: .summon Character Prompt" }, { quoted: msg });
@@ -467,9 +459,7 @@ module.exports = [
                 await sock.sendMessage(jid, { text: `Summoning *${character}*... 🔮` }, { quoted: msg });
 
                 let summonPrompt = `[System: You are '${character}'. Respond strictly in character using their lore and tone. Keep it concise.`;
-                if (isDev) {
-                    summonPrompt += " Address the user as 'Master'.";
-                } else if (isOwner) {
+                if (isOwner) {
                     summonPrompt += ` Address the user as '${config.ownerName}'. Do not refer to him as Master, Infinity, or Isaac.`;
                 }
                 summonPrompt += `]\nQuery: ${query}`;
@@ -482,11 +472,11 @@ module.exports = [
         }
     },
 
-    // 8. .read – Gemini Vision (FIXED: API call format)
+    // 8. .read – Gemini Vision (10-15 sentences)
     {
         name: 'read',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
             const jid = msg.key.remoteJid;
 
             const rawIncoming = getRawMessage(msg.message);
@@ -519,14 +509,12 @@ module.exports = [
 
                 const imageBase64 = buffer.toString("base64");
                 const userPrompt = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
-                let promptQuery = userPrompt || "Analyze this image in detail and extract any text if visible.";
-                if (isDev) {
-                    promptQuery += " Address the user as 'Master'.";
-                } else if (isOwner) {
+                let promptQuery = userPrompt || "Provide a detailed, well-structured analysis (around 10-15 sentences) covering all key elements, visible text, context, and any notable details. Be thorough but concise.";
+                if (isOwner) {
                     promptQuery += ` Address the user as '${config.ownerName}'. Do not refer to him as Master, Infinity, or Isaac.`;
                 }
 
-                const responseText = await queryGeminiVision(imageBase64, mimeType, promptQuery, "gemini-2.0-flash");
+                const responseText = await queryGeminiVision(imageBase64, mimeType, promptQuery, "gemini-3.5-flash");
                 await sock.sendMessage(jid, { text: responseText }, { quoted: msg });
             } catch (error) {
                 console.error("[READ] Error:", error);
@@ -535,7 +523,7 @@ module.exports = [
         }
     },
 
-    // 9. .imagine (FIXED: array)
+    // 9. .imagine
     {
         name: 'imagine',
         isPrefixless: false,
@@ -554,7 +542,7 @@ module.exports = [
         }
     },
 
-    // 10. .say – Brian TTS with conversion (FIXED: array, conversion)
+    // 10. .say – TTS with fallback (Google Translate)
     {
         name: 'say',
         isPrefixless: false,
@@ -571,14 +559,26 @@ module.exports = [
             if (!textToSay) return await sock.sendMessage(jid, { text: "❌ Please provide text." }, { quoted: msg });
 
             try {
-                const audioBuffer = await synthesizeBrianVoice(textToSay);
+                let audioBuffer = await synthesizeBrianVoice(textToSay);
+                if (!audioBuffer) {
+                    console.warn("[SAY] StreamElements failed, falling back to Google TTS");
+                    const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en-us&client=tw-ob&q=${encodeURIComponent(textToSay)}`;
+                    const response = await fetch(fallbackUrl);
+                    if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer();
+                        audioBuffer = Buffer.from(arrayBuffer);
+                    } else {
+                        throw new Error("Both TTS services failed");
+                    }
+                }
+
                 if (audioBuffer) {
                     try {
                         const oggBuffer = await convertMp3ToOgg(audioBuffer);
                         await sock.sendMessage(jid, { audio: oggBuffer, mimetype: 'audio/ogg', ptt: true }, { quoted: msg });
                     } catch (convErr) {
                         console.warn("[SAY] FFmpeg conversion failed, sending as MP3:", convErr.message);
-                        await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                        await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: false }, { quoted: msg });
                     }
                 } else {
                     await sock.sendMessage(jid, { text: "❌ Failed to synthesize audio." }, { quoted: msg });
@@ -586,6 +586,43 @@ module.exports = [
             } catch (err) {
                 console.error("Say command error:", err.message);
                 await sock.sendMessage(jid, { text: "❌ Failed to synthesize audio." }, { quoted: msg });
+            }
+        }
+    },
+
+    // 11. .asst – Assistant Manager
+    {
+        name: 'asst',
+        isPrefixless: false,
+        execute: async (sock, msg, args, { isOwner, isSudo }) => {
+            const jid = msg.key.remoteJid;
+            const aizenActive = config.aizenChats?.includes(jid) || false;
+            const jarvisActive = config.jarvisChats?.includes(jid) || false;
+
+            let statusText = `🤖 *Assistant Status in this chat*\n\n`;
+            statusText += `🌀 *Aizen:* ${aizenActive ? '✅ Active (text)' : '❌ Inactive'}\n`;
+            statusText += `⚙️ *Jarvis:* ${jarvisActive ? '✅ Active (audio)' : '❌ Inactive'}\n\n`;
+            if (!aizenActive && !jarvisActive) {
+                statusText += `No assistant is currently active. Use \`.aizen rise\` or \`.jarvis on\` to activate one.\n`;
+            } else {
+                statusText += `Tap the button below to deactivate the active assistant.`;
+            }
+
+            if (isOwner || isSudo) {
+                const buttonMessage = {
+                    text: statusText,
+                    buttons: [
+                        {
+                            buttonId: 'deactivate_all',
+                            buttonText: { displayText: '🔴 Deactivate Active Assistant' },
+                            type: 1
+                        }
+                    ],
+                    headerType: 1
+                };
+                await sock.sendMessage(jid, buttonMessage, { quoted: msg });
+            } else {
+                await sock.sendMessage(jid, { text: statusText }, { quoted: msg });
             }
         }
     }
