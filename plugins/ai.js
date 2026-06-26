@@ -1,7 +1,31 @@
-// plugins/ai.js – Aizen & Jarvis (Audio)
+// plugins/ai.js – Aizen & Jarvis (Audio) – FINAL PATCHED VERSION
 const config = require('../config');
 const fs = require('fs');
 const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const { PassThrough } = require('stream');
+
+// ─── CONVERT MP3 TO OGG/OPUS ─────────────────────────────────────
+function convertMp3ToOgg(mp3Buffer) {
+    return new Promise((resolve, reject) => {
+        const inputStream = new PassThrough();
+        inputStream.end(mp3Buffer);
+
+        const outputStream = new PassThrough();
+        const chunks = [];
+        outputStream.on('data', chunk => chunks.push(chunk));
+        outputStream.on('end', () => resolve(Buffer.concat(chunks)));
+        outputStream.on('error', reject);
+
+        ffmpeg(inputStream)
+            .inputFormat('mp3')
+            .audioCodec('libopus')
+            .audioBitrate('16k')
+            .format('ogg')
+            .on('error', reject)
+            .pipe(outputStream, { end: true });
+    });
+}
 
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, '..', 'storage', 'state.json');
@@ -27,8 +51,6 @@ function saveState() {
         state.isPublic = config.isPublic;
         state.secondaryOwners = config.secondaryOwners || [];
         state.sudo = config.sudo || [];
-        state.gojoGlobalSleep = config.gojoGlobalSleep;
-        // Add other dynamic settings as needed
         fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
     } catch (e) {
         console.error('[STATE] Save failed:', e.message);
@@ -39,15 +61,12 @@ function saveState() {
 if (!config.aizenChats) config.aizenChats = [];
 if (!config.jarvisChats) config.jarvisChats = [];
 
-// ─── OBFUSCATED API KEYS (I love lizzy) ──────────────────────
-
-// Groq Key (for AI chat)
+// ─── OBFUSCATED API KEYS ──────────────────────────────────────
 const I = 'gsk_';
 const love = 'Pq0ezrYKQNlr77fmp7b';
 const lizzy = 'iWGdyb3FYjuaKTR64bSbIHjLeRxGeL9yw';
 const GROQ_API_KEY = I + love + lizzy;
 
-// Gemini Key (for vision)
 const I_2 = 'AQ.';
 const love_2 = 'Ab8RN6JFBj0Zsx1zqQky2wdWU';
 const lizzy_2 = '-eGvGVjg8aLCJdqggCENROYZQ';
@@ -87,20 +106,28 @@ async function queryGroq(messages, model = "llama-3.3-70b-versatile") {
         },
         body: JSON.stringify({ model, messages, temperature: 0.7 })
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errText}`);
+    }
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "";
 }
 
-// ─── GEMINI VISION ──────────────────────────────────────────────
-async function queryGeminiVision(imageBase64, mimeType, prompt, model = "gemini-3.5-flash") {
+// ─── GEMINI VISION (FIXED) ──────────────────────────────────────
+async function queryGeminiVision(imageBase64, mimeType, prompt, model = "gemini-2.0-flash") {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
     const response = await ai.models.generateContent({
         model,
         contents: [
-            prompt,
-            { inlineData: { mimeType, data: imageBase64 } }
+            {
+                role: 'user',
+                parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: mimeType, data: imageBase64 } }
+                ]
+            }
         ]
     });
     return response.text || "";
@@ -119,7 +146,7 @@ async function synthesizeBrianVoice(text) {
     return null;
 }
 
-// ─── IS BOT ADDRESSED ────────────────────────────────────────────
+// ─── IS BOT ADDRESSED (kept for internal use) ──────────────────
 function isBotAddressed(sock, msg) {
     const rawIncoming = getRawMessage(msg.message);
     const contextInfo = rawIncoming?.extendedTextMessage?.contextInfo ||
@@ -337,13 +364,17 @@ module.exports = [
                     global.aiMemory[jid].jarvis.shift();
                 }
 
-                // Synthesize voice
                 const audioBuffer = await synthesizeBrianVoice(responseText);
                 if (audioBuffer) {
-                    await handleNaturalDelay(sock, jid, responseText, 'recording');
-                    await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                    try {
+                        const oggBuffer = await convertMp3ToOgg(audioBuffer);
+                        await handleNaturalDelay(sock, jid, responseText, 'recording');
+                        await sock.sendMessage(jid, { audio: oggBuffer, mimetype: 'audio/ogg', ptt: true }, { quoted: msg });
+                    } catch (convErr) {
+                        console.warn("[JARVIS] FFmpeg conversion failed, sending as MP3:", convErr.message);
+                        await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                    }
                 } else {
-                    // Fallback to text
                     await handleNaturalDelay(sock, jid, responseText, 'composing');
                     await sock.sendMessage(jid, { text: `[Voice Unavailable] ${responseText}` }, { quoted: msg });
                 }
@@ -354,13 +385,14 @@ module.exports = [
         }
     },
 
-    // 5. .ai / .groq – General AI
+    // 5. .ai / .groq – General AI (FIXED: args array handling)
     {
         name: 'ai',
         isPrefixless: false,
         execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
             const jid = msg.key.remoteJid;
-            if (!args) return await sock.sendMessage(jid, { text: "Hi! What's on your mind?" }, { quoted: msg });
+            const userMessage = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!userMessage) return await sock.sendMessage(jid, { text: "Hi! What's on your mind?" }, { quoted: msg });
 
             try {
                 await sock.sendMessage(jid, { text: "Thinking... 🧠" }, { quoted: msg });
@@ -374,29 +406,31 @@ module.exports = [
 
                 const messages = [
                     { role: "system", content: aiSystemPrompt },
-                    { role: "user", content: args }
+                    { role: "user", content: userMessage }
                 ];
 
                 const responseText = await queryGroq(messages, "llama-3.3-70b-versatile");
                 await sock.sendMessage(jid, { text: responseText }, { quoted: msg });
             } catch (error) {
+                console.error("[AI] Error:", error);
                 await sock.sendMessage(jid, { text: "Tch, looks like something interfered with my system." }, { quoted: msg });
             }
         }
     },
 
-    // 6. .debug
+    // 6. .debug (FIXED)
     {
         name: 'debug',
         isPrefixless: false,
         execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
             const jid = msg.key.remoteJid;
-            if (!args) return await sock.sendMessage(jid, { text: "❌ Please provide your code or error message." }, { quoted: msg });
+            const userMessage = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!userMessage) return await sock.sendMessage(jid, { text: "❌ Please provide your code or error message." }, { quoted: msg });
 
             try {
                 await sock.sendMessage(jid, { text: "Debugging system starting... 🛠️" }, { quoted: msg });
 
-                const debugPrompt = `Analyze this code/error, identify root cause, provide corrected code, and offer brief suggestions:\n\n${args}`;
+                const debugPrompt = `Analyze this code/error, identify root cause, provide corrected code, and offer brief suggestions:\n\n${userMessage}`;
                 let debugSystem = "You are a Senior Software Architect. Keep explanations concise and clear.";
                 if (isDev) {
                     debugSystem += " Address the user as 'Master'.";
@@ -417,17 +451,17 @@ module.exports = [
         }
     },
 
-    // 7. .summon
+    // 7. .summon (FIXED: array handling)
     {
         name: 'summon',
         isPrefixless: false,
         execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
             const jid = msg.key.remoteJid;
-            const spaceIndex = args ? args.indexOf(' ') : -1;
-            if (spaceIndex === -1) return await sock.sendMessage(jid, { text: "❌ Format: .summon Character Prompt" }, { quoted: msg });
+            const argsArray = Array.isArray(args) ? args : (args ? args.split(' ') : []);
+            if (argsArray.length < 2) return await sock.sendMessage(jid, { text: "❌ Format: .summon Character Prompt" }, { quoted: msg });
 
-            const character = args.slice(0, spaceIndex).trim();
-            const query = args.slice(spaceIndex + 1).trim();
+            const character = argsArray[0].trim();
+            const query = argsArray.slice(1).join(' ').trim();
 
             try {
                 await sock.sendMessage(jid, { text: `Summoning *${character}*... 🔮` }, { quoted: msg });
@@ -448,7 +482,7 @@ module.exports = [
         }
     },
 
-    // 8. .read – Gemini Vision
+    // 8. .read – Gemini Vision (FIXED: API call format)
     {
         name: 'read',
         isPrefixless: false,
@@ -484,46 +518,49 @@ module.exports = [
                 for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
                 const imageBase64 = buffer.toString("base64");
-                let promptQuery = args || "Analyze this image in detail and extract any text if visible.";
+                const userPrompt = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+                let promptQuery = userPrompt || "Analyze this image in detail and extract any text if visible.";
                 if (isDev) {
                     promptQuery += " Address the user as 'Master'.";
                 } else if (isOwner) {
                     promptQuery += ` Address the user as '${config.ownerName}'. Do not refer to him as Master, Infinity, or Isaac.`;
                 }
 
-                const responseText = await queryGeminiVision(imageBase64, mimeType, promptQuery, "gemini-3.5-flash");
+                const responseText = await queryGeminiVision(imageBase64, mimeType, promptQuery, "gemini-2.0-flash");
                 await sock.sendMessage(jid, { text: responseText }, { quoted: msg });
             } catch (error) {
+                console.error("[READ] Error:", error);
                 await sock.sendMessage(jid, { text: `❌ Vision processing failed: ${error.message}` }, { quoted: msg });
             }
         }
     },
 
-    // 9. .imagine
+    // 9. .imagine (FIXED: array)
     {
         name: 'imagine',
         isPrefixless: false,
         execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            if (!args) return await sock.sendMessage(jid, { text: "❌ Please provide a description." }, { quoted: msg });
+            const userMessage = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!userMessage) return await sock.sendMessage(jid, { text: "❌ Please provide a description." }, { quoted: msg });
 
             try {
                 await sock.sendMessage(jid, { text: "Expanding Domain: Infinite Imagination... 🌌" }, { quoted: msg });
-                const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(args)}?width=1024&height=1024&nologo=true&private=true`;
-                await sock.sendMessage(jid, { image: { url: imageUrl }, caption: `🎨 *Imagination manifested!*\n\n"${args}"` }, { quoted: msg });
+                const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(userMessage)}?width=1024&height=1024&nologo=true&private=true`;
+                await sock.sendMessage(jid, { image: { url: imageUrl }, caption: `🎨 *Imagination manifested!*\n\n"${userMessage}"` }, { quoted: msg });
             } catch (error) {
                 await sock.sendMessage(jid, { text: "❌ Failed to manifest your imagination." }, { quoted: msg });
             }
         }
     },
 
-    // 10. .say – Brian TTS, voice note
+    // 10. .say – Brian TTS with conversion (FIXED: array, conversion)
     {
         name: 'say',
         isPrefixless: false,
         execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            let textToSay = args ? args.trim() : '';
+            let textToSay = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
 
             const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!textToSay && quoted) {
@@ -536,7 +573,13 @@ module.exports = [
             try {
                 const audioBuffer = await synthesizeBrianVoice(textToSay);
                 if (audioBuffer) {
-                    await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                    try {
+                        const oggBuffer = await convertMp3ToOgg(audioBuffer);
+                        await sock.sendMessage(jid, { audio: oggBuffer, mimetype: 'audio/ogg', ptt: true }, { quoted: msg });
+                    } catch (convErr) {
+                        console.warn("[SAY] FFmpeg conversion failed, sending as MP3:", convErr.message);
+                        await sock.sendMessage(jid, { audio: audioBuffer, mimetype: 'audio/mpeg', ptt: true }, { quoted: msg });
+                    }
                 } else {
                     await sock.sendMessage(jid, { text: "❌ Failed to synthesize audio." }, { quoted: msg });
                 }
