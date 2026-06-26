@@ -5,6 +5,7 @@ const path = require('path');
 const config = require('./config');
 const commands = require('./commands');
 const fs = require('fs');
+const { handleMessage, handleGroupParticipants } = require('./handlers');
 
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
@@ -137,7 +138,6 @@ async function startBot() {
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // ─── Handle QR ──────────────────────────────────────────────
     if (qr && !pairingMode && !qrDisplayed) {
       qrDisplayed = true;
       console.log('\x1b[35m🔮 Hollow Gate QR Code – Scan with your Bankai:\x1b[0m');
@@ -145,7 +145,6 @@ async function startBot() {
       console.log('\x1b[36m👉 Open WhatsApp > Linked Devices > Link a Device\x1b[0m\n');
     }
 
-    // ─── Handle Pairing Code Request ──────────────────────────
     if (targetNumber && !pairingCodeRequested && pairingMode) {
       pairingCodeRequested = true;
       await delay(5000);
@@ -159,7 +158,6 @@ async function startBot() {
       }
     }
 
-    // ─── Handle Disconnection ──────────────────────────────────
     if (connection === 'close') {
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
       console.error('\x1b[31m💀 Soul Reaper disconnected. Reason code:', reason, '\x1b[0m');
@@ -173,7 +171,6 @@ async function startBot() {
       }
     }
 
-    // ─── Handle Connection Open ────────────────────────────────
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
@@ -182,19 +179,21 @@ async function startBot() {
         const primaryJid = targetNumber + '@s.whatsapp.net';
         savePrimaryOwner(primaryJid);
         console.log(`\x1b[33m👑 Primary owner saved: ${primaryJid}\x1b[0m`);
-      } else {
-        // If paired via QR, try to get the bot's own JID as fallback
-        if (sock.user && sock.user.id) {
-          const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-          savePrimaryOwner(botJid);
-          console.log(`\x1b[33m👑 Primary owner (fallback): ${botJid}\x1b[0m`);
-        }
+      } else if (sock.user && sock.user.id) {
+        const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        savePrimaryOwner(botJid);
+        console.log(`\x1b[33m👑 Primary owner (fallback): ${botJid}\x1b[0m`);
       }
 
       // ─── Send Welcome Message to Owner's DM ──────────────────
       let recipientJid = null;
       if (config.owner && config.owner.length > 0 && config.owner[0]) {
-        recipientJid = config.owner[0];
+        let raw = config.owner[0];
+        // Normalize: if it's a number without @s.whatsapp.net or @lid, append @s.whatsapp.net
+        if (!raw.endsWith('@s.whatsapp.net') && !raw.endsWith('@lid')) {
+          raw = raw.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+        }
+        recipientJid = raw;
       } else if (targetNumber) {
         recipientJid = targetNumber + '@s.whatsapp.net';
       }
@@ -251,15 +250,25 @@ async function startBot() {
     }
   });
 
-  // ─── MESSAGE HANDLER: PROCESS COMMANDS ────────────────────────
+  // ─── MESSAGE HANDLER ──────────────────────────────────────────
   sock.ev.on('messages.upsert', async (chatUpdate) => {
-    await require('./handlers').handleMessage(sock, chatUpdate);
+    try {
+      await handleMessage(sock, chatUpdate);
+    } catch (err) {
+      console.error('[FATAL] Message handler error:', err);
+    }
   });
 
-  // ─── GROUP PARTICIPANTS ────────────────────────────────────────
+  // ─── GROUP PARTICIPANTS HANDLER ──────────────────────────────
   sock.ev.on('group-participants.update', async (update) => {
-    await require('./handlers').handleGroupParticipants(sock, update);
+    try {
+      await handleGroupParticipants(sock, update);
+    } catch (err) {
+      console.error('[FATAL] Group participant handler error:', err);
+    }
   });
+
+  console.log('[SYSTEM] Event listeners attached.');
 }
 
 module.exports = { startBot };
