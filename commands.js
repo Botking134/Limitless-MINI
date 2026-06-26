@@ -4,11 +4,14 @@ const path = require('path');
 const config = require('./config');
 
 // ─── EXPORT MAP ──────────────────────────────────────────────────
+// We assign commands directly to module.exports so they can be
+// dynamically reloaded without breaking references.
 const commands = module.exports;
 
 // ─── PLUGINS DIRECTORY ──────────────────────────────────────────
 const pluginsDir = path.join(__dirname, 'plugins');
 
+// Ensure plugins directory exists
 if (!fs.existsSync(pluginsDir)) {
     fs.mkdirSync(pluginsDir, { recursive: true });
 }
@@ -17,6 +20,7 @@ if (!fs.existsSync(pluginsDir)) {
 function getFilesRecursive(dir) {
     let results = [];
     if (!fs.existsSync(dir)) return results;
+
     const list = fs.readdirSync(dir);
     for (const file of list) {
         const filePath = path.join(dir, file);
@@ -35,7 +39,7 @@ function register(cmd) {
     if (!cmd.name || typeof cmd.execute !== 'function') return;
 
     // Determine key:
-    // - If config.prefix is null or undefined → always prefixless
+    // - If prefix is null or undefined → always prefixless
     // - If cmd.isPrefixless → prefixless
     // - Else prepend config.prefix
     const usePrefixless = (config.prefix === null || config.prefix === undefined) || cmd.isPrefixless;
@@ -95,6 +99,7 @@ for (const filePath of pluginFiles) {
     }
 }
 
+// ─── ATTACH RELOAD METHOD ────────────────────────────────────────
 commands.reload = reloadCommands;
 
 const prefixDisplay = config.prefix === null || config.prefix === undefined ? 'none (prefixless)' : config.prefix;
