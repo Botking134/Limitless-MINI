@@ -1,23 +1,42 @@
 // config.js – The Foundation of Limitless
-module.exports = {
+
+// ─── JID NORMALIZATION HELPER ──────────────────────────────────
+function normalizeToJid(input) {
+    if (!input) return '';
+    const clean = String(input).replace(/:[\d]+@/, '@');
+    if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
+    const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
+    return raw ? `${raw}@s.whatsapp.net` : '';
+}
+
+function ensureArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null) return [];
+    if (typeof value === 'string') return [value];
+    return [];
+}
+
+function normalizeJidList(list) {
+    return ensureArray(list)
+        .map(item => normalizeToJid(item))
+        .filter(Boolean);
+}
+
+// ─── CONFIG EXPORT ──────────────────────────────────────────────
+const config = {
     // ─── COMMAND PREFIX ──────────────────────────────────────────
-    // If null, the bot is prefixless. Otherwise, set to a string (e.g., ".").
     prefix: ".",
 
-    // ─── OWNERS & PERMISSIONS ──────────────────────────────────
-    // Primary owners (hardcoded – cannot be removed via .delowner)
-    // Use full JID format: "2347059092107@s.whatsapp.net" or LID.
+    // ─── OWNERS & SUDO ──────────────────────────────────────────
+    // Accept phone numbers (without @s.whatsapp.net) or full JIDs.
+    // They will be normalized to full JID format automatically.
     owner: [
-        "27713655070@s.whatsapp.net",
-        "2347040491291@s.whatsapp.net"
+        "27713655070",      // <- phone number
+        "2347040491291"     // <- phone number
     ],
-
-    // Dynamic secondary owners and sudo are stored in state.json,
-    // but you can also pre‑fill them here as fallbacks.
-    secondaryOwners: [],
     sudo: [],
 
-    // Bot mode: true = public (everyone can use), false = private (only owners/sudo)
+    // ─── BOT MODE ──────────────────────────────────────────────────
     isPublic: true,
 
     // ─── STICKER DEFAULTS ──────────────────────────────────────
@@ -31,30 +50,19 @@ module.exports = {
     // ─── MISC / DYNAMIC SETTINGS ──────────────────────────────
     botName: 'Limitless-MD',
     ownerName: 'Infinity',
-    // The following are usually set at runtime via state.json:
-    primaryOwner: null,    // will be set on first pairing
+
+    // ─── RUNTIME SETTINGS (stored in state.json) ──────────────
     botJid: null,
     botLid: null,
-    gojoGlobalSleep: false,
-    autoReact: 'off',       // 'cmd', 'all', or 'off'
-    antidelete: null,
-    antiviewonce: null,
-    antibug: null,
-    antipm: null,
+    autoReact: 'off',
     statusEmoji: '💖',
-    autovs: null,
-    autors: null,
     stickerCommands: {},
-    presence: {
-        autotyping: { all: false, chats: [] },
-        autorecording: { all: false, chats: [] },
-        alwaysonline: { all: false },
-        autoread: { all: false }
-    },
-    // Chatbot toggles (stored in state)
+
+    // ─── CHATBOT TOGGLES (stored in state) ──────────────────────
     aizenChats: [],
     jarvisChats: [],
-    // Group settings (stored in state)
+
+    // ─── GROUP SETTINGS (stored in state) ──────────────────────
     welcome: {},
     goodbye: {},
     gcalerts: { promote: {}, demote: {}, welcome: {}, goodbye: {} },
@@ -69,9 +77,16 @@ module.exports = {
     warns: {},
     warnThreshold: 5,
     dailyActivity: {},
-    totalMessages: {},
-    // API keys (now hardcoded in respective plugins)
-    geminiApiKey: null,   // no longer used (hardcoded in bankai.js, ai.js, group.js)
-    groqApiKey: null,     // no longer used (hardcoded in ai.js)
-    telegramBotToken: null // for tgs command (if you add it)
+    totalMessages: {}
 };
+
+// ─── NORMALIZE OWNER AND SUDO LISTS ON EXPORT ──────────────────
+config.owner = normalizeJidList(config.owner);
+config.sudo = normalizeJidList(config.sudo);
+
+// ─── EXPOSE HELPERS FOR USE IN OTHER FILES ─────────────────────
+config._normalizeToJid = normalizeToJid;
+config._normalizeJidList = normalizeJidList;
+config._ensureArray = ensureArray;
+
+module.exports = config;
