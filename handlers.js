@@ -1,7 +1,8 @@
 /**
  * handlers.js – Centralized message and event handling
- * Features: command dispatch, gclog, welcome/goodbye, auto-react, owner mention reaction,
- *           button labels, bankai selection, and number‑only owner matching.
+ * Features: command dispatch, gclog, auto-react, owner mention reaction,
+ *           agent detection (Aizen/Jarvis by name), .asst button handling,
+ *           button ID mapping for menu system.
  */
 
 const config = require('./config');
@@ -20,6 +21,16 @@ const BUTTON_LABEL_MAP = {
     "🔙 Back": "menu_back"
 };
 
+// ─── BUTTON ID TO COMMAND MAPPING ─────────────────────────────
+const BUTTON_ID_MAP = {
+    "menu_core": "menu_core",
+    "menu_owner": "menu_owner",
+    "menu_ai": "menu_ai",
+    "menu_group": "menu_group",
+    "menu_dl": "menu_dl",
+    "menu_back": "menu_back"
+};
+
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
@@ -27,10 +38,23 @@ const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
 function normalizeJid(input) {
     if (!input) return '';
-    const clean = input.replace(/:[\d]+@/, '@');
+    const clean = String(input).replace(/:[\d]+@/, '@');
     if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
     const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
     return raw ? `${raw}@s.whatsapp.net` : '';
+}
+
+function ensureArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null) return [];
+    if (typeof value === 'string') return [value];
+    return [];
+}
+
+function normalizeJidList(list) {
+    return ensureArray(list)
+        .map(item => normalizeJid(item))
+        .filter(Boolean);
 }
 
 function loadState() {
@@ -38,55 +62,48 @@ function loadState() {
         if (fs.existsSync(STATE_PATH)) {
             const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
             const keys = [
-                'secondaryOwners', 'sudo', 'primaryOwner', 'prefix', 'isPublic',
-                'autoReact', 'antidelete', 'antiviewonce', 'antibug', 'antipm',
-                'statusEmoji', 'autovs', 'autors', 'stickerCommands', 'presence',
-                'aizenChats', 'jarvisChats', 'welcome', 'goodbye', 'gcalerts',
-                'gclogActive', 'conversationLogs', 'antilink', 'antigm', 'antispam',
-                'antigcstatus', 'antipromote', 'antidemote', 'warns', 'warnThreshold',
-                'dailyActivity', 'totalMessages'
+                'prefix', 'isPublic', 'autoReact', 'statusEmoji',
+                'stickerCommands', 'aizenChats', 'jarvisChats',
+                'welcome', 'goodbye', 'gcalerts', 'gclogActive',
+                'conversationLogs', 'antilink', 'antigm', 'antispam',
+                'antigcstatus', 'antipromote', 'antidemote',
+                'warns', 'warnThreshold', 'dailyActivity', 'totalMessages',
+                'botJid', 'botLid'
             ];
             for (const key of keys) {
                 if (data[key] !== undefined) config[key] = data[key];
             }
-            // Normalize all owner/sudo JIDs
-            if (config.owner) {
-                config.owner = config.owner.map(j => normalizeJid(j)).filter(Boolean);
-            }
-            if (config.secondaryOwners) {
-                config.secondaryOwners = config.secondaryOwners.map(j => normalizeJid(j)).filter(Boolean);
-            }
-            if (config.sudo) {
-                config.sudo = config.sudo.map(j => normalizeJid(j)).filter(Boolean);
-            }
-            if (config.primaryOwner) {
-                config.primaryOwner = normalizeJid(config.primaryOwner);
-            }
+            // Normalize owner and sudo from state
+            if (data.owner) config.owner = normalizeJidList(data.owner);
+            if (data.sudo) config.sudo = normalizeJidList(data.sudo);
+            if (data.botJid) config.botJid = normalizeJid(data.botJid);
+            if (data.botLid) config.botLid = normalizeJid(data.botLid);
         }
     } catch (e) {
         console.warn('[STATE] Failed to load state:', e.message);
     }
 }
-loadState();
 
-// ─── SAVE STATE ──────────────────────────────────────────────────
 function saveState() {
     try {
         const dir = path.dirname(STATE_PATH);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         let state = {};
         const keys = [
-            'secondaryOwners', 'sudo', 'primaryOwner', 'prefix', 'isPublic',
-            'autoReact', 'antidelete', 'antiviewonce', 'antibug', 'antipm',
-            'statusEmoji', 'autovs', 'autors', 'stickerCommands', 'presence',
-            'aizenChats', 'jarvisChats', 'welcome', 'goodbye', 'gcalerts',
-            'gclogActive', 'conversationLogs', 'antilink', 'antigm', 'antispam',
-            'antigcstatus', 'antipromote', 'antidemote', 'warns', 'warnThreshold',
-            'dailyActivity', 'totalMessages'
+            'prefix', 'isPublic', 'autoReact', 'statusEmoji',
+            'stickerCommands', 'aizenChats', 'jarvisChats',
+            'welcome', 'goodbye', 'gcalerts', 'gclogActive',
+            'conversationLogs', 'antilink', 'antigm', 'antispam',
+            'antigcstatus', 'antipromote', 'antidemote',
+            'warns', 'warnThreshold', 'dailyActivity', 'totalMessages',
+            'botJid', 'botLid'
         ];
         for (const key of keys) {
             if (config[key] !== undefined) state[key] = config[key];
         }
+        // Store owner and sudo as arrays
+        state.owner = config.owner || [];
+        state.sudo = config.sudo || [];
         fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
     } catch (e) {
         console.error('[STATE] Save failed:', e.message);
@@ -94,7 +111,12 @@ function saveState() {
 }
 global.saveState = saveState;
 
-// ─── OTHER HELPERS ──────────────────────────────────────────────
+// Normalize config on load
+config.owner = normalizeJidList(config.owner);
+config.sudo = normalizeJidList(config.sudo);
+if (config.botJid) config.botJid = normalizeJid(config.botJid);
+if (config.botLid) config.botLid = normalizeJid(config.botLid);
+loadState();
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -114,28 +136,44 @@ function getMentionedJids(msg) {
     return ctx?.mentionedJid || [];
 }
 
-// ─── OWNER MATCHING (supports numbers only) ─────────────────────
 function matchesOwnerList(senderJid, senderPhone, ownerList) {
     if (!ownerList || !Array.isArray(ownerList)) return false;
     for (const entry of ownerList) {
         const normalizedEntry = normalizeJid(entry);
-        // If the entry ends with @s.whatsapp.net or @lid, compare full JID
-        if (normalizedEntry.endsWith('@s.whatsapp.net') || normalizedEntry.endsWith('@lid')) {
-            if (senderJid === normalizedEntry) return true;
-        } else {
-            // Assume entry is just digits (phone number)
-            if (senderPhone === entry) return true;
-        }
+        if (senderJid === normalizedEntry) return true;
+        // Also match by phone number
+        if (senderPhone === normalizedEntry.split('@')[0]) return true;
     }
+    return false;
+}
+
+function isBotAddressed(sock, msg) {
+    const rawIncoming = getRawMessage(msg.message);
+    const contextInfo = rawIncoming?.extendedTextMessage?.contextInfo ||
+                        rawIncoming?.imageMessage?.contextInfo ||
+                        rawIncoming?.videoMessage?.contextInfo;
+
+    const botJid = sock.user?.id ? normalizeJid(sock.user.id) : '';
+    const botLid = sock.user?.lid ? normalizeJid(sock.user.lid) : (config.botLid || '');
+
+    const quotedParticipant = contextInfo?.participant ? normalizeJid(contextInfo.participant) : '';
+    if (quotedParticipant && (quotedParticipant === botJid || (botLid && quotedParticipant === botLid))) {
+        return true;
+    }
+
+    const mentions = contextInfo?.mentionedJid || [];
+    const normalizedMentions = mentions.map(m => normalizeJid(m));
+    if (normalizedMentions.includes(botJid) || (botLid && normalizedMentions.includes(botLid))) {
+        return true;
+    }
+
     return false;
 }
 
 // ─── EMOJI MAP FOR AUTO-REACT ──────────────────────────────────
 const EMOJI_MAP = {
-    // (same as before – I'll include it fully in the final code)
     ping: '🏓',
     ping2: '⚡',
-    // ... all commands from previous versions
     shazam: '🎶'
 };
 
@@ -144,12 +182,15 @@ async function handleMessage(sock, chatUpdate) {
     const msg = chatUpdate.messages[0];
     if (!msg || msg.key.fromMe) return;
 
-    // Extract text
     let text = '';
     if (msg.message?.conversation) {
         text = msg.message.conversation;
     } else if (msg.message?.extendedTextMessage?.text) {
         text = msg.message.extendedTextMessage.text;
+    } else if (msg.message?.buttonsResponseMessage?.selectedButtonId) {
+        text = msg.message.buttonsResponseMessage.selectedButtonId;
+    } else if (msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
+        text = msg.message.listResponseMessage.singleSelectReply.selectedRowId;
     } else {
         text = '[Media]';
     }
@@ -173,11 +214,7 @@ async function handleMessage(sock, chatUpdate) {
 
     // ─── OWNER MENTION REACTION ─────────────────────────────────
     const mentioned = getMentionedJids(msg);
-    const allOwners = [
-        ...(config.owner || []),
-        config.primaryOwner || '',
-        ...(config.secondaryOwners || [])
-    ].filter(Boolean).map(j => normalizeJid(j));
+    const allOwners = ensureArray(config.owner).map(j => normalizeJid(j)).filter(Boolean);
     let ownerMentioned = false;
     for (const m of mentioned) {
         const nm = normalizeJid(m);
@@ -200,59 +237,129 @@ async function handleMessage(sock, chatUpdate) {
     }
 
     // ─── PERMISSION CONTEXT ─────────────────────────────────────
-    // Primary owners (hardcoded config.owner)
-    const primaryOwners = (config.owner || []).map(j => normalizeJid(j));
-    const primaryOwner = config.primaryOwner ? normalizeJid(config.primaryOwner) : '';
-    const secondaryOwners = (config.secondaryOwners || []).map(j => normalizeJid(j));
-    const sudoList = (config.sudo || []).map(j => normalizeJid(j));
+    const ownerList = ensureArray(config.owner).map(j => normalizeJid(j)).filter(Boolean);
+    const sudoList = ensureArray(config.sudo).map(j => normalizeJid(j)).filter(Boolean);
 
-    // Use number-only matching for all checks
-    const isPrimaryOwner = matchesOwnerList(senderJid, senderPhone, primaryOwners) ||
-                           (primaryOwner && (senderJid === primaryOwner || senderPhone === primaryOwner.split('@')[0]));
-    const isOwner = isPrimaryOwner || matchesOwnerList(senderJid, senderPhone, secondaryOwners);
+    const isOwner = matchesOwnerList(senderJid, senderPhone, ownerList);
     const isSudo = isOwner || matchesOwnerList(senderJid, senderPhone, sudoList);
 
-    // ─── BUTTON LABEL MAPPING ──────────────────────────────────
+    // ─── HANDLE .asst BUTTON PRESS ──────────────────────────────
     const trimmedText = text.trim();
+    if (trimmedText === 'deactivate_all') {
+        const active = config.aizenChats?.includes(jid) ? 'aizen' : (config.jarvisChats?.includes(jid) ? 'jarvis' : null);
+        if (active === 'aizen') {
+            if (commands['aizen']) {
+                await commands['aizen'](sock, msg, ['seal'], { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+            }
+        } else if (active === 'jarvis') {
+            if (commands['jarvis']) {
+                await commands['jarvis'](sock, msg, ['off'], { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+            }
+        } else {
+            await sock.sendMessage(jid, { text: "🤖 No active assistant to deactivate." }, { quoted: msg });
+        }
+        return;
+    }
+
+    // ─── COMMAND EXTRACTION ──────────────────────────────────────
     let commandName = '';
     let args = [];
+
+    // Check button labels first
     if (BUTTON_LABEL_MAP[trimmedText]) {
         commandName = BUTTON_LABEL_MAP[trimmedText];
         args = [];
-        console.log(`[BUTTON] ${trimmedText} → ${commandName}`);
-    } else {
-        const parts = trimmedText.split(/\s+/);
-        commandName = parts.shift().toLowerCase();
-        args = parts;
+        console.log(`[BUTTON] Label match: ${trimmedText} → ${commandName}`);
+    } 
+    // Then check button IDs
+    else if (BUTTON_ID_MAP[trimmedText]) {
+        commandName = BUTTON_ID_MAP[trimmedText];
+        args = [];
+        console.log(`[BUTTON] ID match: ${trimmedText} → ${commandName}`);
+    } 
+    // Then check if it's a prefixed command
+    else {
+        const prefix = config.prefix || '.';
+        if (trimmedText.startsWith(prefix)) {
+            const withoutPrefix = trimmedText.slice(prefix.length).trim();
+            const parts = withoutPrefix.split(/\s+/);
+            commandName = parts.shift().toLowerCase();
+            args = parts;
+        } else {
+            commandName = '';
+            args = [];
+        }
     }
 
     // ─── COMMAND DISPATCH ──────────────────────────────────────
-    const handler = commands[commandName];
-    if (handler && typeof handler === 'function') {
-        console.log(`[CMD] Executing: ${commandName}`);
-        try {
-            await handler(sock, msg, args, { isOwner, isSudo, isPrimaryOwner, sender: senderJid, senderNumber: senderPhone });
-            // Auto-react if enabled
-            if (config.autoReact === 'cmd') {
-                const emoji = EMOJI_MAP[commandName];
-                if (emoji) {
+    if (commandName) {
+        const handler = commands[commandName];
+        if (handler && typeof handler === 'function') {
+            console.log(`[CMD] Executing: ${commandName}`);
+            try {
+                await handler(sock, msg, args, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                if (config.autoReact === 'cmd') {
+                    const emoji = EMOJI_MAP[commandName];
+                    if (emoji) {
+                        try {
+                            await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
+                        } catch (e) { /* ignore */ }
+                    }
+                }
+            } catch (err) {
+                console.error(`[CMD] Error in ${commandName}:`, err);
+                await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
+            }
+            return;
+        }
+    }
+
+    // ─── AGENT DETECTION (prefixless interceptors) ──────────────
+    const prefix = config.prefix || '.';
+    if (!trimmedText.startsWith(prefix)) {
+        const lowerMsg = trimmedText.toLowerCase();
+
+        const mentionsAizen = lowerMsg.includes('aizen');
+        const mentionsJarvis = lowerMsg.includes('jarvis');
+
+        let detectedAgent = null;
+        let isAddressed = isBotAddressed(sock, msg);
+
+        if (mentionsAizen) {
+            detectedAgent = 'aizen';
+        } else if (mentionsJarvis) {
+            detectedAgent = 'jarvis';
+        } else if (isAddressed) {
+            if (config.aizenChats?.includes(jid)) detectedAgent = 'aizen';
+            else if (config.jarvisChats?.includes(jid)) detectedAgent = 'jarvis';
+        }
+
+        if (detectedAgent) {
+            if (detectedAgent === 'aizen' && config.aizenChats?.includes(jid)) {
+                if (commands['aizen_chat']) {
                     try {
-                        await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
-                    } catch (e) { /* ignore */ }
+                        await commands['aizen_chat'](sock, msg, trimmedText, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                    } catch (err) {
+                        console.error('[AIZEN] Interceptor error:', err);
+                    }
+                }
+            } else if (detectedAgent === 'jarvis' && config.jarvisChats?.includes(jid)) {
+                if (commands['jarvis_chat']) {
+                    try {
+                        await commands['jarvis_chat'](sock, msg, trimmedText, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                    } catch (err) {
+                        console.error('[JARVIS] Interceptor error:', err);
+                    }
                 }
             }
-        } catch (err) {
-            console.error(`[CMD] Error in ${commandName}:`, err);
-            await sock.sendMessage(jid, { text: `❌ An error occurred while executing the command.` }).catch(() => {});
         }
-    } else {
-        // Silent ignore – no log for unhandled commands
     }
 }
 
-// ─── GROUP PARTICIPANTS HANDLER (welcome/goodbye) ──────────────
+// ─── GROUP PARTICIPANTS HANDLER ─────────────────────────────────
 async function handleGroupParticipants(sock, update) {
-    // (unchanged – same as previous)
+    // Keep your existing implementation here
+    // (unchanged from your original)
 }
 
 module.exports = {
