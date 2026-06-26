@@ -38,14 +38,8 @@ function getFilesRecursive(dir) {
 function register(cmd) {
     if (!cmd.name || typeof cmd.execute !== 'function') return;
 
-    // Determine key:
-    // - If prefix is null or undefined → always prefixless
-    // - If cmd.isPrefixless → prefixless
-    // - Else prepend config.prefix
-    const usePrefixless = (config.prefix === null || config.prefix === undefined) || cmd.isPrefixless;
-    const key = usePrefixless
-        ? cmd.name.toLowerCase()
-        : `${config.prefix}${cmd.name.toLowerCase()}`;
+    // Use the command name as key – no prefix included
+    const key = cmd.name.toLowerCase();
 
     if (key === 'reload') return;
     commands[key] = cmd.execute;
