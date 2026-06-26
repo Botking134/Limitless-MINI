@@ -152,14 +152,11 @@ const BANKAI_LIST = [
     }
 ];
 
-// ─── GEMINI API KEY (obfuscated) ───────────────────────────────
-const _geminiChars = [
-    65, 81, 46, 65, 98, 56, 82, 78, 54, 75, 90, 108, 100, 98, 111, 70, 116,
-    52, 110, 109, 69, 114, 67, 115, 82, 108, 118, 100, 111, 51, 116, 108, 101,
-    53, 90, 74, 97, 70, 54, 70, 100, 85, 66, 82, 107, 49, 120, 54, 51, 69, 87,
-    89, 65
-];
-const GEMINI_API_KEY = String.fromCharCode(..._geminiChars);
+// ─── OBFUSCATED GEMINI KEY (I love lizzy) ──────────────────────
+const I = 'AQ.';
+const love = 'Ab8RN6JFBj0Zsx1zqQky2wdWU';
+const lizzy = '-eGvGVjg8aLCJdqggCENROYZQ';
+const GEMINI_API_KEY = I + love + lizzy;
 
 // ─── SESSIONS FOR MULTIPLE MATCHES ──────────────────────────────
 global.bankaiSessions = global.bankaiSessions || {};
@@ -275,13 +272,6 @@ module.exports = [
 ];
 
 // ─── HANDLER FOR SELECTION REPLIES ──────────────────────────────
-// We need to handle replies to the list message. We'll add a listener in pair.js or handlers.js.
-// But for simplicity, we'll handle it in the same file via a separate exported function.
-// We'll also expose a function to be called from handlers.js.
-
-// This function can be called from handlers.js when a text message is a reply to a prompt.
-// We'll register it globally.
-
 async function handleBankaiSelection(sock, msg) {
     const quotedMsg = msg.message?.extendedTextMessage?.contextInfo;
     if (!quotedMsg || !quotedMsg.quotedMessage) return false;
