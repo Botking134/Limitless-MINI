@@ -1,4 +1,4 @@
-// pair.js – Bleach Edition (Kyōka Suigetsu Protocol) with Command Handling
+// pair.js – Bleach Edition (Kyōka Suigetsu Protocol) – Master + Masters Edition
 const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
@@ -9,19 +9,30 @@ const fs = require('fs');
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
-function savePrimaryOwner(jid) {
+// ─── HELPER: READ/SAVE PAIRING NUMBER ──────────────────────────
+function getStoredPairingNumber() {
+    try {
+        if (fs.existsSync(STATE_PATH)) {
+            const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
+            return data.pairingNumber || null;
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+function savePairingNumber(number) {
     try {
         const dir = path.dirname(STATE_PATH);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        let state = {};
+        let data = {};
         if (fs.existsSync(STATE_PATH)) {
-            state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
+            data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
         }
-        state.primaryOwner = jid;
-        fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
-        console.log(`[STATE] Primary owner saved: ${jid}`);
+        data.pairingNumber = number;
+        fs.writeFileSync(STATE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+        console.log(`[STATE] Pairing number saved: ${number}`);
     } catch (e) {
-        console.error('[STATE] Failed to save primary owner:', e.message);
+        console.error('[STATE] Failed to save pairing number:', e.message);
     }
 }
 
@@ -109,6 +120,8 @@ async function startBot() {
         console.log('\x1b[31m❌ Invalid number. The blade rejects you. Restart.\x1b[0m');
         process.exit(1);
       }
+      // ─── SAVE PAIRING NUMBER TO STATE ──────────────────────
+      savePairingNumber(targetNumber);
       console.log('\x1b[33m"You have seen my zanpakto, Kyouka Suigetsu.... It\'s Ability is perfect hypnosis"\x1b[0m');
       console.log(`\x1b[36m⏳ Requesting Zanpakutō pairing code for ${targetNumber}...\x1b[0m\n`);
     } else if (choice === '2') {
@@ -118,6 +131,13 @@ async function startBot() {
     } else {
       console.log('\x1b[31m❌ Invalid choice. The Soul Society rejects you.\x1b[0m');
       process.exit(1);
+    }
+  } else {
+    // ─── IF ALREADY REGISTERED, RETRIEVE STORED PAIRING NUMBER ──
+    const stored = getStoredPairingNumber();
+    if (stored) {
+      targetNumber = stored;
+      console.log(`\x1b[36m📌 Retrieved stored pairing number: ${targetNumber}\x1b[0m`);
     }
   }
 
@@ -133,7 +153,7 @@ async function startBot() {
 
   let pairingCodeRequested = false;
   let qrDisplayed = false;
-  let welcomeSent = false; // prevent duplicate welcome
+  let welcomeSent = false;
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -178,16 +198,65 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
-      // ─── SAVE PRIMARY OWNER (only if targetNumber exists) ──
-      if (targetNumber) {
-        const primaryJid = targetNumber + '@s.whatsapp.net';
-        savePrimaryOwner(primaryJid);
-        console.log(`\x1b[33m👑 Primary owner saved: ${primaryJid}\x1b[0m`);
-      } else {
-        console.log('\x1b[33m⚠️ QR mode – no primary owner saved.\x1b[0m');
+      // ─── ENSURE targetNumber IS SET (from state if null) ────
+      if (!targetNumber) {
+        const stored = getStoredPairingNumber();
+        if (stored) {
+          targetNumber = stored;
+          console.log(`\x1b[36m📌 Retrieved stored pairing number on reconnect: ${targetNumber}\x1b[0m`);
+        }
       }
 
-      // ─── SEND WELCOME MESSAGE TO PAIRING NUMBER (ONCE) ──────
+      // ─── AUTO‑SET PRIMARY MASTER (if not already set) ──────
+      if (targetNumber && !config.master) {
+        const masterJid = targetNumber + '@s.whatsapp.net';
+        config.master = masterJid;
+        try {
+          const { saveState } = require('./handlers');
+          saveState();
+          console.log(`\x1b[33m👑 Primary master auto‑set to: ${masterJid}\x1b[0m`);
+        } catch (e) {
+          console.warn('[MASTER] Could not save master:', e.message);
+        }
+      }
+
+      // ─── AUTO‑ADD PAIRING NUMBER TO SECONDARY MASTERS ──────
+      if (targetNumber) {
+        const pairedJid = targetNumber + '@s.whatsapp.net';
+        const primaryMaster = config.master ? normalizeJid(config.master) : '';
+        // Normalize helper – we need a function to normalize JIDs
+        // We'll use the one from handlers if possible, but we'll inline a simple version.
+        function normalizeToJid(input) {
+            if (!input) return '';
+            const clean = String(input).replace(/:[\d]+@/, '@');
+            if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
+            const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
+            return raw ? `${raw}@s.whatsapp.net` : '';
+        }
+        const isPrimary = pairedJid === normalizeToJid(primaryMaster) || targetNumber === primaryMaster?.split('@')[0];
+
+        if (!isPrimary) {
+          // Add to masters array if not already present
+          if (!Array.isArray(config.masters)) config.masters = [];
+          const exists = config.masters.some(m => normalizeToJid(m) === pairedJid || m.split('@')[0] === targetNumber);
+          if (!exists) {
+            config.masters.push(pairedJid);
+            try {
+              const { saveState } = require('./handlers');
+              saveState();
+              console.log(`\x1b[33m👑 Paired number ${targetNumber} added to secondary masters.\x1b[0m`);
+            } catch (e) {
+              console.warn('[MASTERS] Could not save state:', e.message);
+            }
+          } else {
+            console.log(`\x1b[33m👑 Paired number ${targetNumber} is already in masters list.\x1b[0m`);
+          }
+        } else {
+          console.log(`\x1b[33m👑 Paired number ${targetNumber} is the primary master.\x1b[0m`);
+        }
+      }
+
+      // ─── SEND WELCOME MESSAGE ──────────────────────────────────
       if (targetNumber && !welcomeSent) {
         welcomeSent = true;
         const recipientJid = targetNumber + '@s.whatsapp.net';
@@ -232,7 +301,7 @@ async function startBot() {
           console.error(`\x1b[31m❌ Failed to send welcome message: ${err.message}\x1b[0m`);
         }
       } else if (!targetNumber) {
-        console.log('\x1b[33m⚠️ No targetNumber (QR mode) – skipping welcome DM.\x1b[0m');
+        console.log('\x1b[33m⚠️ No pairing number found in state – skipping welcome.\x1b[0m');
       }
 
       // ─── Always-Online Presence ──────────────────────────────
@@ -242,12 +311,12 @@ async function startBot() {
     }
   });
 
-  // ─── MESSAGE HANDLER: PROCESS COMMANDS ────────────────────────
+  // ─── MESSAGE HANDLER ──────────────────────────────────────────
   sock.ev.on('messages.upsert', async (chatUpdate) => {
     await require('./handlers').handleMessage(sock, chatUpdate);
   });
 
-  // ─── GROUP PARTICIPANTS ────────────────────────────────────────
+  // ─── GROUP PARTICIPANTS ──────────────────────────────────────
   sock.ev.on('group-participants.update', async (update) => {
     await require('./handlers').handleGroupParticipants(sock, update);
   });
