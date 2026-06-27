@@ -1,9 +1,15 @@
-// plugins/bankai.js – .bankai <query> with Gemini abilities
+// plugins/bankai.js – .bankai <query> with Groq abilities
 const config = require('../config');
 const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai');
 
-// ─── BANKAI LIST (same as menu.js) ─────────────────────────────
+// ─── OBFUSCATED GROQ KEY ──────────────────────────────────────
+const I = 'gsk_';
+const love = 'Pq0ezrYKQNlr77fmp7b';
+const lizzy = 'iWGdyb3FYjuaKTR64bSbIHjLeRxGeL9yw';
+const GROQ_API_KEY = I + love + lizzy;
+const GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+// ─── BANKAI LIST ──────────────────────────────────────────────────
 const BANKAI_LIST = [
     {
         name: 'Genryūsai Shigekuni Yamamoto',
@@ -152,12 +158,6 @@ const BANKAI_LIST = [
     }
 ];
 
-// ─── OBFUSCATED GEMINI KEY (I love lizzy) ──────────────────────
-const I = 'AQ.';
-const love = 'Ab8RN6JFBj0Zsx1zqQky2wdWU';
-const lizzy = '-eGvGVjg8aLCJdqggCENROYZQ';
-const GEMINI_API_KEY = I + love + lizzy;
-
 // ─── SESSIONS FOR MULTIPLE MATCHES ──────────────────────────────
 global.bankaiSessions = global.bankaiSessions || {};
 
@@ -178,40 +178,100 @@ async function getImageBuffer(url) {
     }
 }
 
-function searchBankai(query) {
-    const q = query.toLowerCase().trim();
-    const results = [];
-    for (const entry of BANKAI_LIST) {
-        if (entry.name.toLowerCase().includes(q) || entry.bankai.toLowerCase().includes(q)) {
-            results.push(entry);
+// ─── LEVENSHTEIN DISTANCE (fuzzy matching) ──────────────────────
+function levenshtein(a, b) {
+    const matrix = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+        for (let j = 1; j <= a.length; j++) {
+            if (b[i-1] === a[j-1]) {
+                matrix[i][j] = matrix[i-1][j-1];
+            } else {
+                matrix[i][j] = Math.min(
+                    matrix[i-1][j-1] + 1,
+                    matrix[i][j-1] + 1,
+                    matrix[i-1][j] + 1
+                );
+            }
         }
     }
-    return results;
+    return matrix[b.length][a.length];
 }
 
-// ─── GEMINI ABILITY FETCH ──────────────────────────────────────
+function getClosestMatch(query, entries) {
+    const q = query.toLowerCase().trim();
+    let best = null;
+    let bestScore = Infinity;
+    for (const entry of entries) {
+        const name = entry.name.toLowerCase();
+        const bankai = entry.bankai.toLowerCase();
+        const distName = levenshtein(q, name);
+        const distBankai = levenshtein(q, bankai);
+        const dist = Math.min(distName, distBankai);
+        if (dist < bestScore) {
+            bestScore = dist;
+            best = entry;
+        }
+    }
+    // If the best distance is > 3, consider it not found
+    if (bestScore > 3) return null;
+    return best;
+}
+
+function searchBankai(query) {
+    const q = query.toLowerCase().trim();
+    // Exact substring matches (like before)
+    const results = BANKAI_LIST.filter(entry =>
+        entry.name.toLowerCase().includes(q) ||
+        entry.bankai.toLowerCase().includes(q)
+    );
+    if (results.length > 0) return results;
+    // Fallback: fuzzy match
+    const closest = getClosestMatch(q, BANKAI_LIST);
+    return closest ? [closest] : [];
+}
+
+// ─── GROQ ABILITY FETCH ──────────────────────────────────────────
 async function getBankaiAbility(name, bankai) {
-    // Special case: Aizen's "404 error"
+    // Special cases
     if (bankai.includes('404 error')) {
         return 'This Bankai is beyond description.';
     }
-    // For unknown or unnamed, return a generic message
     if (bankai.toLowerCase().includes('unknown') || bankai.toLowerCase().includes('unnamed')) {
         return 'No known abilities are recorded for this Bankai.';
     }
 
     try {
-        const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-        const prompt = `Describe the abilities of the Bankai "${bankai}" from Bleach, used by "${name}". Keep the description concise, maximum 3 sentences. Do not include any introductory text, just the description.`;
-        const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: prompt
+        const prompt =
+            `Describe the abilities of the Bankai "${bankai}" from the anime Bleach, used by the character "${name}". Provide a detailed explanation of its powers, effects, and any notable techniques. Keep it informative but concise (around 100-150 words). Do not include any introductory or concluding remarks, just the description.`;
+
+        const response = await fetch(GROQ_BASE_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${GROQ_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                    { role: "system", content: "You are a knowledgeable Bleach lore expert. Provide detailed but concise descriptions." },
+                    { role: "user", content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 300
+            })
         });
-        let text = response.text || '';
-        if (text.length > 400) text = text.slice(0, 397) + '...';
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        let text = data.choices?.[0]?.message?.content || '';
+        if (text.length > 800) text = text.slice(0, 797) + '...';
         return text.trim() || 'Abilities are unknown.';
     } catch (err) {
-        console.error('Gemini error:', err);
+        console.error('Groq error:', err);
         return 'Could not retrieve abilities.';
     }
 }
@@ -221,20 +281,20 @@ async function getBankaiAbility(name, bankai) {
 module.exports = [
     {
         name: 'bankai',
-        isPrefixless: false, // prefixed
-        execute: async (sock, msg, args, { isOwner, isSudo, isPrimaryOwner, sender, senderNumber }) => {
+        isPrefixless: false,
+        execute: async (sock, msg, args, { isMaster }) => {
             const jid = msg.key.remoteJid;
 
-            // Permission: private mode only owner/sudo
-            if (!config.isPublic && !isOwner && !isSudo) {
-                return await sock.sendMessage(jid, { text: "❌ You are not authorized to use this command in private mode." }, { quoted: msg });
+            // Only masters can use .bankai (in line with new architecture)
+            if (!isMaster) {
+                return await sock.sendMessage(jid, { text: "❌ Only the master can use this command." }, { quoted: msg });
             }
 
-            // If no args, show usage
+            // If no args, pick a random bankai
             if (!args || args.length === 0) {
-                return await sock.sendMessage(jid, {
-                    text: `❌ Please provide a Bankai name or character name.\nExample: \`${config.prefix}bankai tensa\``
-                }, { quoted: msg });
+                const randomEntry = BANKAI_LIST[Math.floor(Math.random() * BANKAI_LIST.length)];
+                await showBankai(sock, msg, randomEntry);
+                return;
             }
 
             const query = args.join(' ');
@@ -247,12 +307,11 @@ module.exports = [
             }
 
             if (results.length === 1) {
-                // Single match – display directly
                 await showBankai(sock, msg, results[0]);
                 return;
             }
 
-            // Multiple matches – send a numbered list
+            // Multiple matches – send numbered list
             let listText = `🔍 *Multiple Bankai found for '${query}':*\n\n`;
             results.forEach((entry, index) => {
                 listText += `${index + 1}. *${entry.bankai}* – ${entry.name}\n`;
@@ -261,7 +320,6 @@ module.exports = [
 
             const promptMsg = await sock.sendMessage(jid, { text: listText }, { quoted: msg });
 
-            // Store session for this prompt
             global.bankaiSessions[promptMsg.key.id] = {
                 results: results,
                 chatId: jid,
@@ -284,11 +342,10 @@ async function handleBankaiSelection(sock, msg) {
     const replyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
     const num = parseInt(replyText.trim());
     if (isNaN(num) || num < 1 || num > session.results.length) {
-        // Invalid number – ignore or notify
         await sock.sendMessage(msg.key.remoteJid, {
             text: `❌ Invalid selection. Please choose a number between 1 and ${session.results.length}.`
         }, { quoted: msg });
-        return true; // handled
+        return true;
     }
 
     const selected = session.results[num - 1];
@@ -300,14 +357,12 @@ async function handleBankaiSelection(sock, msg) {
 async function showBankai(sock, msg, entry) {
     const jid = msg.key.remoteJid;
 
-    // Pick a random image from the entry
     const imageUrl = entry.images[Math.floor(Math.random() * entry.images.length)];
     const imageBuffer = await getImageBuffer(imageUrl);
     if (!imageBuffer) {
         return await sock.sendMessage(jid, { text: "❌ Failed to load Bankai image." }, { quoted: msg });
     }
 
-    // Fetch abilities from Gemini
     const ability = await getBankaiAbility(entry.name, entry.bankai);
 
     const caption =
