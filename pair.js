@@ -9,18 +9,18 @@ const fs = require('fs');
 // ─── STATE PATH ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
-// ─── HELPER: READ/SAVE PAIRING NUMBER ──────────────────────────
-function getStoredPairingNumber() {
+// ─── HELPER: READ/SAVE WELCOME FLAG ────────────────────────────
+function hasWelcomeSent() {
     try {
         if (fs.existsSync(STATE_PATH)) {
             const data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
-            return data.pairingNumber || null;
+            return data.welcomeSent || false;
         }
     } catch (e) { /* ignore */ }
-    return null;
+    return false;
 }
 
-function savePairingNumber(number) {
+function markWelcomeSent() {
     try {
         const dir = path.dirname(STATE_PATH);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -28,12 +28,21 @@ function savePairingNumber(number) {
         if (fs.existsSync(STATE_PATH)) {
             data = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
         }
-        data.pairingNumber = number;
+        data.welcomeSent = true;
         fs.writeFileSync(STATE_PATH, JSON.stringify(data, null, 2), 'utf-8');
-        console.log(`[STATE] Pairing number saved: ${number}`);
+        console.log('[STATE] Welcome flag saved.');
     } catch (e) {
-        console.error('[STATE] Failed to save pairing number:', e.message);
+        console.error('[STATE] Failed to save welcome flag:', e.message);
     }
+}
+
+// ─── HELPER: NORMALIZE JID ──────────────────────────────────────
+function normalizeToJid(input) {
+    if (!input) return '';
+    const clean = String(input).replace(/:[\d]+@/, '@');
+    if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
+    const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
+    return raw ? `${raw}@s.whatsapp.net` : '';
 }
 
 // ─── KIDŌ SPELLS ──────────────────────────────────────────────────
@@ -120,8 +129,6 @@ async function startBot() {
         console.log('\x1b[31m❌ Invalid number. The blade rejects you. Restart.\x1b[0m');
         process.exit(1);
       }
-      // ─── SAVE PAIRING NUMBER TO STATE ──────────────────────
-      savePairingNumber(targetNumber);
       console.log('\x1b[33m"You have seen my zanpakto, Kyouka Suigetsu.... It\'s Ability is perfect hypnosis"\x1b[0m');
       console.log(`\x1b[36m⏳ Requesting Zanpakutō pairing code for ${targetNumber}...\x1b[0m\n`);
     } else if (choice === '2') {
@@ -133,12 +140,8 @@ async function startBot() {
       process.exit(1);
     }
   } else {
-    // ─── IF ALREADY REGISTERED, RETRIEVE STORED PAIRING NUMBER ──
-    const stored = getStoredPairingNumber();
-    if (stored) {
-      targetNumber = stored;
-      console.log(`\x1b[36m📌 Retrieved stored pairing number: ${targetNumber}\x1b[0m`);
-    }
+    // Already paired – no need to load pairing number; master is in config.
+    console.log('\x1b[36m📌 Already paired. Master is set in config.\x1b[0m');
   }
 
   // ─── CREATE SOCKET ─────────────────────────────────────────────
@@ -153,7 +156,7 @@ async function startBot() {
 
   let pairingCodeRequested = false;
   let qrDisplayed = false;
-  let welcomeSent = false;
+  let welcomeSent = false; // local flag for this session
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -198,16 +201,8 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
-      // ─── ENSURE targetNumber IS SET (from state if null) ────
-      if (!targetNumber) {
-        const stored = getStoredPairingNumber();
-        if (stored) {
-          targetNumber = stored;
-          console.log(`\x1b[36m📌 Retrieved stored pairing number on reconnect: ${targetNumber}\x1b[0m`);
-        }
-      }
-
-      // ─── AUTO‑SET PRIMARY MASTER (if not already set) ──────
+      // ─── PRIMARY MASTER SETUP ──────────────────────────────────
+      // If config.master is empty, set it to the pairing number (if available)
       if (targetNumber && !config.master) {
         const masterJid = targetNumber + '@s.whatsapp.net';
         config.master = masterJid;
@@ -223,22 +218,16 @@ async function startBot() {
       // ─── AUTO‑ADD PAIRING NUMBER TO SECONDARY MASTERS ──────
       if (targetNumber) {
         const pairedJid = targetNumber + '@s.whatsapp.net';
-        const primaryMaster = config.master ? normalizeJid(config.master) : '';
-        // Normalize helper – we need a function to normalize JIDs
-        // We'll use the one from handlers if possible, but we'll inline a simple version.
-        function normalizeToJid(input) {
-            if (!input) return '';
-            const clean = String(input).replace(/:[\d]+@/, '@');
-            if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
-            const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
-            return raw ? `${raw}@s.whatsapp.net` : '';
-        }
-        const isPrimary = pairedJid === normalizeToJid(primaryMaster) || targetNumber === primaryMaster?.split('@')[0];
+        const primaryMaster = config.master ? normalizeToJid(config.master) : '';
+        const isPrimary = pairedJid === normalizeToJid(primaryMaster) || 
+                          targetNumber === primaryMaster?.split('@')[0];
 
         if (!isPrimary) {
-          // Add to masters array if not already present
           if (!Array.isArray(config.masters)) config.masters = [];
-          const exists = config.masters.some(m => normalizeToJid(m) === pairedJid || m.split('@')[0] === targetNumber);
+          const exists = config.masters.some(m => 
+            normalizeToJid(m) === pairedJid || 
+            m.split('@')[0] === targetNumber
+          );
           if (!exists) {
             config.masters.push(pairedJid);
             try {
@@ -256,9 +245,10 @@ async function startBot() {
         }
       }
 
-      // ─── SEND WELCOME MESSAGE ──────────────────────────────────
-      if (targetNumber && !welcomeSent) {
+      // ─── SEND WELCOME MESSAGE (only if targetNumber and not sent) ──
+      if (targetNumber && !welcomeSent && !hasWelcomeSent()) {
         welcomeSent = true;
+        markWelcomeSent();
         const recipientJid = targetNumber + '@s.whatsapp.net';
         await delay(2000);
         try {
@@ -300,8 +290,56 @@ async function startBot() {
         } catch (err) {
           console.error(`\x1b[31m❌ Failed to send welcome message: ${err.message}\x1b[0m`);
         }
+      } else if (targetNumber && !welcomeSent && hasWelcomeSent()) {
+        console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
       } else if (!targetNumber) {
-        console.log('\x1b[33m⚠️ No pairing number found in state – skipping welcome.\x1b[0m');
+        // No targetNumber – this is a restart; we don't send welcome.
+        console.log('\x1b[33m⚠️ No pairing number (restart) – skipping welcome.\x1b[0m');
+      }
+
+      // ─── Send Status Report to Master's DM ──────────────────
+      try {
+        const masterJid = config.master ? normalizeToJid(config.master) : '';
+        if (!masterJid) {
+          console.warn("[WARNING] No master set, skipping status report.");
+        } else {
+          const prefixVal = config.prefix || "⚡";
+          const timeStr = new Date().toLocaleTimeString('en-US', {
+            timeZone: 'Africa/Lagos',
+            hour12: true
+          });
+
+          let pingMs = 35;
+          try {
+            const startPing = Date.now();
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
+            clearTimeout(timeout);
+            pingMs = Date.now() - startPing;
+          } catch (e) { /* ignore */ }
+
+          const statusCard =
+            `\`\`\`` +
+            `⚔️ ═══ [ BANKAI RELEASED ] ═══ ⚔️\n\n` +
+            ` ▶ SYSTEM :: LIMITLESS-MD\n` +
+            ` ▶ PREFIX :: ${prefixVal}\n` +
+            ` ▶ SPEED :: ${pingMs}ms\n` +
+            ` ▶ TIME :: ${timeStr} WAT\n\n` +
+            `─── [ SOUL REAPER STATUS ] ───\n` +
+            ` ⟫ 🔴 RED :: CHARGED\n` +
+            ` ⟫ 🔵 BLUE :: CHARGED\n` +
+            ` ⟫ 🟣 PURPLE :: READY TO FIRE\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            ` "I am the blade, the whisper of death."\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━` +
+            `\`\`\``;
+
+          await sock.sendMessage(masterJid, { text: statusCard });
+          console.log(`✅ [SYSTEM] Connection status report dispatched to master: ${masterJid}`);
+        }
+      } catch (err) {
+        console.error("[WARNING] Failed to send connection report:", err.message);
       }
 
       // ─── Always-Online Presence ──────────────────────────────
