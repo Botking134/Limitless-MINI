@@ -1,4 +1,5 @@
-// config.js – The Foundation of Limitless
+// config.js – The Foundation of Limitless (Master + Masters Edition)
+const path = require('path');
 
 // ─── JID NORMALIZATION HELPER ──────────────────────────────────
 function normalizeToJid(input) {
@@ -27,16 +28,16 @@ const config = {
     // ─── COMMAND PREFIX ──────────────────────────────────────────
     prefix: ".",
 
-    // ─── OWNERS & SUDO ──────────────────────────────────────────
-    // Accept phone numbers (without @s.whatsapp.net) or full JIDs.
-    // They will be normalized to full JID format automatically.
-    owner: [
-        "27713655070",      // <- phone number
-        "2347040491291"     // <- phone number
-    ],
-    sudo: [],
+    // ─── PRIMARY MASTER (hardcoded) ─────────────────────────────
+    // Accepts phone number (without @s.whatsapp.net) or full JID/LID.
+    master: "2347059092107",   // Change to your number
 
-    // ─── BOT MODE ──────────────────────────────────────────────────
+    // ─── SECONDARY MASTERS (stored in state.json, auto‑added on pairing)
+    masters: [],
+
+    // ─── PUBLIC MODE ──────────────────────────────────────────────
+    // true  = anyone can use normal commands (only masters can use owner commands)
+    // false = only masters can use the bot at all
     isPublic: true,
 
     // ─── STICKER DEFAULTS ──────────────────────────────────────
@@ -80,13 +81,13 @@ const config = {
     totalMessages: {}
 };
 
-// ─── NORMALIZE OWNER AND SUDO LISTS ON EXPORT ──────────────────
-config.owner = normalizeJidList(config.owner);
-config.sudo = normalizeJidList(config.sudo);
-
-// ─── EXPOSE HELPERS FOR USE IN OTHER FILES ─────────────────────
-config._normalizeToJid = normalizeToJid;
-config._normalizeJidList = normalizeJidList;
-config._ensureArray = ensureArray;
+// ─── NORMALIZE MASTER AND MASTERS ──────────────────────────────
+if (config.master) {
+    config.master = normalizeToJid(config.master);
+} else {
+    // If master is empty, we'll auto‑set it on first pairing in pair.js
+    config.master = null;
+}
+config.masters = normalizeJidList(config.masters);
 
 module.exports = config;
