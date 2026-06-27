@@ -3,10 +3,10 @@ const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
 const config = require('./config');
-const commands = require('./commands');
+const core = require('./core');          // 🆕 single source of truth
 const fs = require('fs');
 
-// ─── STATE PATH ──────────────────────────────────────────────────
+// ─── STATE PATH (for welcome flag only) ─────────────────────────
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
 // ─── HELPER: READ/SAVE WELCOME FLAG ────────────────────────────
@@ -34,15 +34,6 @@ function markWelcomeSent() {
     } catch (e) {
         console.error('[STATE] Failed to save welcome flag:', e.message);
     }
-}
-
-// ─── HELPER: NORMALIZE JID ──────────────────────────────────────
-function normalizeToJid(input) {
-    if (!input) return '';
-    const clean = String(input).replace(/:[\d]+@/, '@');
-    if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
-    const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
-    return raw ? `${raw}@s.whatsapp.net` : '';
 }
 
 // ─── KIDŌ SPELLS ──────────────────────────────────────────────────
@@ -100,7 +91,10 @@ async function startBot() {
   const authFolder = path.join(__dirname, 'storage', 'session_auth');
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
-  let targetNumber = null;
+  // Import saveState from handlers for dynamic settings (not master)
+  const { saveState } = require('./handlers');
+
+  let targetNumber = null;   // plain number entered by user
   let pairingMode = false;
 
   // ─── AUTHENTICATION MENU ──────────────────────────────────────
@@ -140,7 +134,7 @@ async function startBot() {
       process.exit(1);
     }
   } else {
-    console.log('\x1b[36m📌 Already paired. Master is set in config.\x1b[0m');
+    console.log('\x1b[36m📌 Already paired. Master is in core.\x1b[0m');
   }
 
   // ─── CREATE SOCKET ─────────────────────────────────────────────
@@ -200,98 +194,62 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
-      // ─── PRIMARY MASTER SETUP ──────────────────────────────────
-      if (targetNumber && !config.master) {
-        const masterJid = targetNumber + '@s.whatsapp.net';
-        config.master = masterJid;
-        try {
-          const { saveState } = require('./handlers');
-          saveState();
-          console.log(`\x1b[33m👑 Primary master auto‑set to: ${masterJid}\x1b[0m`);
-        } catch (e) {
-          console.warn('[MASTER] Could not save master:', e.message);
-        }
-      }
-
-      // ─── AUTO‑ADD PAIRING NUMBER TO SECONDARY MASTERS ──────
+      // ─── SET MASTER (OPTION B: always overwrite) ────────────
       if (targetNumber) {
-        const pairedJid = targetNumber + '@s.whatsapp.net';
-        const primaryMaster = config.master ? normalizeToJid(config.master) : '';
-        const isPrimary = pairedJid === normalizeToJid(primaryMaster) || 
-                          targetNumber === primaryMaster?.split('@')[0];
+        core.setMaster(targetNumber);   // stores JID in core.json
+        console.log(`\x1b[33m👑 Master set to: ${core.getMasterJid()}\x1b[0m`);
 
-        if (!isPrimary) {
-          if (!Array.isArray(config.masters)) config.masters = [];
-          const exists = config.masters.some(m => 
-            normalizeToJid(m) === pairedJid || 
-            m.split('@')[0] === targetNumber
-          );
-          if (!exists) {
-            config.masters.push(pairedJid);
+        // ─── SEND WELCOME MESSAGE (once per bot lifetime) ──────
+        if (!hasWelcomeSent()) {
+          await delay(2000);
+          const masterJid = core.getMasterJid();   // use the stored JID
+          try {
+            const prefixVal = config.prefix || '⚡';
+            const timeStr = new Date().toLocaleTimeString('en-US', {
+              timeZone: 'Africa/Lagos', hour12: true
+            });
+            let pingMs = 35;
             try {
-              const { saveState } = require('./handlers');
-              saveState();
-              console.log(`\x1b[33m👑 Paired number ${targetNumber} added to secondary masters.\x1b[0m`);
-            } catch (e) {
-              console.warn('[MASTERS] Could not save state:', e.message);
-            }
-          } else {
-            console.log(`\x1b[33m👑 Paired number ${targetNumber} is already in masters list.\x1b[0m`);
+              const startPing = Date.now();
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 3000);
+              await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
+              clearTimeout(timeout);
+              pingMs = Date.now() - startPing;
+            } catch (e) { /* ignore */ }
+
+            const randomKido = getRandomKido();
+            const welcomeText =
+              `⚔️══ [  ONLINE ] ══⚔️\n` +
+              `𝒀𝒐𝒌𝒐𝒔𝒐! \n` +
+              `𝑾𝒂𝒕𝒂𝒔𝒉𝒊𝒏𝒐 𝒔𝒐𝒖𝒍 𝒔𝒐𝒄𝒊𝒆𝒕𝒚\n\n` +
+              ` 𝑷𝒓𝒆𝒇𝒊𝒙 :: ${prefixVal}\n` +
+              `  𝑹𝒆𝒊𝒂𝒕𝒔𝒖 𝒔𝒑𝒆𝒆𝒅 :: ${pingMs}ms\n` +
+              ` 𝑻𝒊𝒎𝒆 :: ${timeStr} WAT\n\n` +
+              `─── [ Kaidō ] ───\n` +
+              ` ${randomKido}\n` +
+              `━━━━━━━━━━━━━━━━`;
+
+            const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
+            await sock.sendMessage(masterJid, {
+              video: { url: gifUrl },
+              gifPlayback: true,
+              caption: welcomeText
+            });
+
+            // Only mark sent after success
+            welcomeSent = true;
+            markWelcomeSent();
+            console.log(`\x1b[32m✅ Welcome message dispatched to master ${masterJid}\x1b[0m`);
+          } catch (err) {
+            console.error(`\x1b[31m❌ Failed to send welcome: ${err.message}\x1b[0m`);
+            // Will retry on next connection
           }
         } else {
-          console.log(`\x1b[33m👑 Paired number ${targetNumber} is the primary master.\x1b[0m`);
+          console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
         }
-      }
-
-      // ─── SEND WELCOME MESSAGE (GIF + BLEACH THEME) ────────────
-      if (targetNumber && !welcomeSent && !hasWelcomeSent()) {
-        welcomeSent = true;
-        markWelcomeSent();
-        const recipientJid = targetNumber + '@s.whatsapp.net';
-        await delay(2000);
-        try {
-          const prefixVal = config.prefix || '⚡';
-          const timeStr = new Date().toLocaleTimeString('en-US', {
-            timeZone: 'Africa/Lagos',
-            hour12: true
-          });
-          let pingMs = 35;
-          try {
-            const startPing = Date.now();
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
-            clearTimeout(timeout);
-            pingMs = Date.now() - startPing;
-          } catch (e) { /* ignore */ }
-
-          const randomKido = getRandomKido();
-          const welcomeText =
-            `⚔️══ [  ONLINE ] ══⚔️\n` +
-            `𝒀𝒐𝒌𝒐𝒔𝒐! \n` +
-            `𝑾𝒂𝒕𝒂𝒔𝒉𝒊𝒏𝒐 𝒔𝒐𝒖𝒍 𝒔𝒐𝒄𝒊𝒆𝒕𝒚\n\n` +
-            ` 𝑷𝒓𝒆𝒇𝒊𝒙 :: ${prefixVal}\n` +
-            `  𝑹𝒆𝒊𝒂𝒕𝒔𝒖 𝒔𝒑𝒆𝒆𝒅 :: ${pingMs}ms\n` +
-            ` 𝑻𝒊𝒎𝒆 :: ${timeStr} WAT\n\n` +
-            `─── [ Kaidō ] ───\n` +
-            ` ${randomKido}\n` +
-            `━━━━━━━━━━━━━━━━`;
-
-          const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
-          await sock.sendMessage(recipientJid, {
-            video: { url: gifUrl },
-            gifPlayback: true,
-            caption: welcomeText
-          });
-
-          console.log(`\x1b[32m✅ Welcome message dispatched to ${recipientJid}\x1b[0m`);
-        } catch (err) {
-          console.error(`\x1b[31m❌ Failed to send welcome message: ${err.message}\x1b[0m`);
-        }
-      } else if (targetNumber && !welcomeSent && hasWelcomeSent()) {
-        console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
-      } else if (!targetNumber) {
-        console.log('\x1b[33m⚠️ No pairing number (restart) – skipping welcome.\x1b[0m');
+      } else {
+        console.log('\x1b[33m⚠️ QR mode – master not auto-set. Use a command to set master if needed.\x1b[0m');
       }
 
       // ─── Always-Online Presence ──────────────────────────────
