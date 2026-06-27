@@ -1,15 +1,15 @@
 // index.js – Bleach Edition (The Final Incantation)
 const { startBot } = require('./pair');
 const config = require('./config');
+const core = require('./core');          // 🆕 single source of truth
 const fs = require('fs');
 const path = require('path');
 
-// ─── LOAD PERSISTENT STATE INTO CONFIG ─────────────────────────
+// ─── LOAD PERSISTENT STATE INTO CONFIG (dynamic settings only) ──
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 try {
     if (fs.existsSync(STATE_PATH)) {
         const state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf-8'));
-        // Merge dynamic settings into config
         if (state.secondaryOwners) config.secondaryOwners = state.secondaryOwners;
         if (state.sudo) config.sudo = state.sudo;
         if (state.prefix !== undefined) config.prefix = state.prefix;
@@ -23,12 +23,32 @@ try {
         if (state.autovs) config.autovs = state.autovs;
         if (state.autors) config.autors = state.autors;
         if (state.stickerCommands) config.stickerCommands = state.stickerCommands;
-        // presence settings
         if (state.presence) config.presence = state.presence;
         console.log('[STATE] Loaded dynamic settings into config.');
     }
 } catch (e) {
     console.warn('[STATE] Failed to load state:', e.message);
+}
+
+// ─── SYNC MASTER & MASTERS FROM CONFIG TO CORE ────────────────
+// Only set master if core doesn't already have one
+if (!core.getMasterJid()) {
+    if (config.master) {
+        core.setMaster(config.master);
+        console.log(`[CORE] Seeded master from config: ${core.getMasterLid() || core.getMasterJid()}`);
+    }
+} else {
+    console.log(`[CORE] Master already set: ${core.getMasterLid() || core.getMasterJid()}`);
+}
+
+// Ensure config's secondary masters are present in core
+if (Array.isArray(config.masters) && config.masters.length > 0) {
+    const before = core.getMastersJid().length;
+    config.masters.forEach(m => core.addMaster(m));
+    const after = core.getMastersJid().length;
+    if (after > before) {
+        console.log(`[CORE] Synced ${after - before} masters from config.`);
+    }
 }
 
 // ─── TEMPORARY LOG CAPTURE ──────────────────────────────────────
@@ -67,7 +87,7 @@ console.log(`
 \x1b[33m[SYSTEM] Initiating Soul Reaper Protocol...\x1b[0m
 \x1b[33m[SYSTEM] Zanpakutō: Kyōka Suigetsu\x1b[0m
 \x1b[33m[SYSTEM] Status: \x1b[32mAwaiting Release Command\x1b[0m
-\x1b[33m[SYSTEM] Pairs:    \x1b[36mPaired Number Receives Welcome DM\x1b[0m
+\x1b[33m[SYSTEM] Master (LID): \x1b[36m${core.getMasterLid() || 'Not set'}\x1b[0m
 `);
 
 // ─── START THE BOT ──────────────────────────────────────────────
