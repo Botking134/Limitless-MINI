@@ -140,7 +140,6 @@ async function startBot() {
       process.exit(1);
     }
   } else {
-    // Already paired – no need to load pairing number; master is in config.
     console.log('\x1b[36m📌 Already paired. Master is set in config.\x1b[0m');
   }
 
@@ -156,7 +155,7 @@ async function startBot() {
 
   let pairingCodeRequested = false;
   let qrDisplayed = false;
-  let welcomeSent = false; // local flag for this session
+  let welcomeSent = false;
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -202,7 +201,6 @@ async function startBot() {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
       // ─── PRIMARY MASTER SETUP ──────────────────────────────────
-      // If config.master is empty, set it to the pairing number (if available)
       if (targetNumber && !config.master) {
         const masterJid = targetNumber + '@s.whatsapp.net';
         config.master = masterJid;
@@ -245,7 +243,7 @@ async function startBot() {
         }
       }
 
-      // ─── SEND WELCOME MESSAGE (only if targetNumber and not sent) ──
+      // ─── SEND WELCOME MESSAGE (GIF + BLEACH THEME) ────────────
       if (targetNumber && !welcomeSent && !hasWelcomeSent()) {
         welcomeSent = true;
         markWelcomeSent();
@@ -293,53 +291,7 @@ async function startBot() {
       } else if (targetNumber && !welcomeSent && hasWelcomeSent()) {
         console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
       } else if (!targetNumber) {
-        // No targetNumber – this is a restart; we don't send welcome.
         console.log('\x1b[33m⚠️ No pairing number (restart) – skipping welcome.\x1b[0m');
-      }
-
-      // ─── Send Status Report to Master's DM ──────────────────
-      try {
-        const masterJid = config.master ? normalizeToJid(config.master) : '';
-        if (!masterJid) {
-          console.warn("[WARNING] No master set, skipping status report.");
-        } else {
-          const prefixVal = config.prefix || "⚡";
-          const timeStr = new Date().toLocaleTimeString('en-US', {
-            timeZone: 'Africa/Lagos',
-            hour12: true
-          });
-
-          let pingMs = 35;
-          try {
-            const startPing = Date.now();
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
-            clearTimeout(timeout);
-            pingMs = Date.now() - startPing;
-          } catch (e) { /* ignore */ }
-
-          const statusCard =
-            `\`\`\`` +
-            `⚔️ ═══ [ BANKAI RELEASED ] ═══ ⚔️\n\n` +
-            ` ▶ SYSTEM :: LIMITLESS-MD\n` +
-            ` ▶ PREFIX :: ${prefixVal}\n` +
-            ` ▶ SPEED :: ${pingMs}ms\n` +
-            ` ▶ TIME :: ${timeStr} WAT\n\n` +
-            `─── [ SOUL REAPER STATUS ] ───\n` +
-            ` ⟫ 🔴 RED :: CHARGED\n` +
-            ` ⟫ 🔵 BLUE :: CHARGED\n` +
-            ` ⟫ 🟣 PURPLE :: READY TO FIRE\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            ` "I am the blade, the whisper of death."\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━` +
-            `\`\`\``;
-
-          await sock.sendMessage(masterJid, { text: statusCard });
-          console.log(`✅ [SYSTEM] Connection status report dispatched to master: ${masterJid}`);
-        }
-      } catch (err) {
-        console.error("[WARNING] Failed to send connection report:", err.message);
       }
 
       // ─── Always-Online Presence ──────────────────────────────
