@@ -1,8 +1,6 @@
 /**
  * handlers.js – Centralized message and event handling
- * Features: command dispatch, gclog, auto-react, owner mention reaction,
- *           agent detection (Aizen/Jarvis by name), .asst button handling,
- *           button ID mapping for menu system.
+ * Master + Masters Edition – primary master (hardcoded) + secondary masters (dynamic).
  */
 
 const config = require('./config');
@@ -68,14 +66,14 @@ function loadState() {
                 'conversationLogs', 'antilink', 'antigm', 'antispam',
                 'antigcstatus', 'antipromote', 'antidemote',
                 'warns', 'warnThreshold', 'dailyActivity', 'totalMessages',
-                'botJid', 'botLid'
+                'botJid', 'botLid', 'master'
             ];
             for (const key of keys) {
                 if (data[key] !== undefined) config[key] = data[key];
             }
-            // Normalize owner and sudo from state
-            if (data.owner) config.owner = normalizeJidList(data.owner);
-            if (data.sudo) config.sudo = normalizeJidList(data.sudo);
+            // Normalize master and masters
+            if (data.master) config.master = normalizeJid(data.master);
+            if (data.masters) config.masters = normalizeJidList(data.masters);
             if (data.botJid) config.botJid = normalizeJid(data.botJid);
             if (data.botLid) config.botLid = normalizeJid(data.botLid);
         }
@@ -101,9 +99,9 @@ function saveState() {
         for (const key of keys) {
             if (config[key] !== undefined) state[key] = config[key];
         }
-        // Store owner and sudo as arrays
-        state.owner = config.owner || [];
-        state.sudo = config.sudo || [];
+        // Store master and masters
+        state.master = config.master || null;
+        state.masters = config.masters || [];
         fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8');
     } catch (e) {
         console.error('[STATE] Save failed:', e.message);
@@ -112,11 +110,13 @@ function saveState() {
 global.saveState = saveState;
 
 // Normalize config on load
-config.owner = normalizeJidList(config.owner);
-config.sudo = normalizeJidList(config.sudo);
+if (config.master) config.master = normalizeJid(config.master);
+config.masters = normalizeJidList(config.masters);
 if (config.botJid) config.botJid = normalizeJid(config.botJid);
 if (config.botLid) config.botLid = normalizeJid(config.botLid);
 loadState();
+
+console.log(`📊 [HANDLERS] Commands loaded: ${Object.keys(commands).length}`);
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -134,17 +134,6 @@ function getMentionedJids(msg) {
     const raw = getRawMessage(msg.message);
     const ctx = raw?.contextInfo || raw?.extendedTextMessage?.contextInfo;
     return ctx?.mentionedJid || [];
-}
-
-function matchesOwnerList(senderJid, senderPhone, ownerList) {
-    if (!ownerList || !Array.isArray(ownerList)) return false;
-    for (const entry of ownerList) {
-        const normalizedEntry = normalizeJid(entry);
-        if (senderJid === normalizedEntry) return true;
-        // Also match by phone number
-        if (senderPhone === normalizedEntry.split('@')[0]) return true;
-    }
-    return false;
 }
 
 function isBotAddressed(sock, msg) {
@@ -212,15 +201,28 @@ async function handleMessage(sock, chatUpdate) {
         if (config.conversationLogs[jid].length % 10 === 0) saveState();
     }
 
+    // ─── PERMISSION CONTEXT ─────────────────────────────────────
+    const masterJid = config.master ? normalizeJid(config.master) : '';
+    const mastersList = normalizeJidList(config.masters);
+
+    const isPrimaryMaster = senderJid === masterJid || senderPhone === masterJid.split('@')[0];
+    const isSecondaryMaster = mastersList.some(m => m === senderJid || m.split('@')[0] === senderPhone);
+    const isMaster = isPrimaryMaster || isSecondaryMaster;
+
+    // ─── PUBLIC MODE CHECK ─────────────────────────────────────
+    if (!config.isPublic && !isMaster) {
+        // Private mode – only masters can use the bot
+        return;
+    }
+
     // ─── OWNER MENTION REACTION ─────────────────────────────────
     const mentioned = getMentionedJids(msg);
-    const allOwners = ensureArray(config.owner).map(j => normalizeJid(j)).filter(Boolean);
-    let ownerMentioned = false;
-    for (const m of mentioned) {
-        const nm = normalizeJid(m);
-        if (allOwners.includes(nm)) { ownerMentioned = true; break; }
+    const allMasters = [masterJid, ...mastersList].filter(Boolean);
+    let masterMentioned = false;
+    if (allMasters.length > 0 && mentioned.some(m => allMasters.includes(normalizeJid(m)))) {
+        masterMentioned = true;
     }
-    if (ownerMentioned && !msg.key.fromMe) {
+    if (masterMentioned && !msg.key.fromMe) {
         const emojis = ['3⃣', '2⃣', '1⃣', '0⃣', '⛩️'];
         for (const emoji of emojis) {
             try {
@@ -236,24 +238,21 @@ async function handleMessage(sock, chatUpdate) {
         if (handled) return;
     }
 
-    // ─── PERMISSION CONTEXT ─────────────────────────────────────
-    const ownerList = ensureArray(config.owner).map(j => normalizeJid(j)).filter(Boolean);
-    const sudoList = ensureArray(config.sudo).map(j => normalizeJid(j)).filter(Boolean);
-
-    const isOwner = matchesOwnerList(senderJid, senderPhone, ownerList);
-    const isSudo = isOwner || matchesOwnerList(senderJid, senderPhone, sudoList);
-
     // ─── HANDLE .asst BUTTON PRESS ──────────────────────────────
     const trimmedText = text.trim();
     if (trimmedText === 'deactivate_all') {
+        if (!isMaster) {
+            await sock.sendMessage(jid, { text: "❌ Only masters can deactivate assistants." }, { quoted: msg });
+            return;
+        }
         const active = config.aizenChats?.includes(jid) ? 'aizen' : (config.jarvisChats?.includes(jid) ? 'jarvis' : null);
         if (active === 'aizen') {
             if (commands['aizen']) {
-                await commands['aizen'](sock, msg, ['seal'], { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                await commands['aizen'](sock, msg, ['seal'], { isMaster, sender: senderJid, senderNumber: senderPhone });
             }
         } else if (active === 'jarvis') {
             if (commands['jarvis']) {
-                await commands['jarvis'](sock, msg, ['off'], { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                await commands['jarvis'](sock, msg, ['off'], { isMaster, sender: senderJid, senderNumber: senderPhone });
             }
         } else {
             await sock.sendMessage(jid, { text: "🤖 No active assistant to deactivate." }, { quoted: msg });
@@ -265,20 +264,15 @@ async function handleMessage(sock, chatUpdate) {
     let commandName = '';
     let args = [];
 
-    // Check button labels first
     if (BUTTON_LABEL_MAP[trimmedText]) {
         commandName = BUTTON_LABEL_MAP[trimmedText];
         args = [];
         console.log(`[BUTTON] Label match: ${trimmedText} → ${commandName}`);
-    } 
-    // Then check button IDs
-    else if (BUTTON_ID_MAP[trimmedText]) {
+    } else if (BUTTON_ID_MAP[trimmedText]) {
         commandName = BUTTON_ID_MAP[trimmedText];
         args = [];
         console.log(`[BUTTON] ID match: ${trimmedText} → ${commandName}`);
-    } 
-    // Then check if it's a prefixed command
-    else {
+    } else {
         const prefix = config.prefix || '.';
         if (trimmedText.startsWith(prefix)) {
             const withoutPrefix = trimmedText.slice(prefix.length).trim();
@@ -295,9 +289,21 @@ async function handleMessage(sock, chatUpdate) {
     if (commandName) {
         const handler = commands[commandName];
         if (handler && typeof handler === 'function') {
+            // ─── MASTER-ONLY COMMANDS ────────────────────────────
+            const masterCommands = [
+                'aizen', 'jarvis', 'asst',
+                'setprefix', 'autoreact', 'mode', 'update', 'restart', 'shutdown',
+                'block', 'unblock', 'clear', 'antipm', 'statusemoji',
+                'addmaster', 'delmaster', 'masters', 'diagnose', 'logs'
+            ];
+            if (masterCommands.includes(commandName) && !isMaster) {
+                await sock.sendMessage(jid, { text: "❌ Only masters can use this command." }, { quoted: msg });
+                return;
+            }
+
             console.log(`[CMD] Executing: ${commandName}`);
             try {
-                await handler(sock, msg, args, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                await handler(sock, msg, args, { isMaster, sender: senderJid, senderNumber: senderPhone });
                 if (config.autoReact === 'cmd') {
                     const emoji = EMOJI_MAP[commandName];
                     if (emoji) {
@@ -338,7 +344,7 @@ async function handleMessage(sock, chatUpdate) {
             if (detectedAgent === 'aizen' && config.aizenChats?.includes(jid)) {
                 if (commands['aizen_chat']) {
                     try {
-                        await commands['aizen_chat'](sock, msg, trimmedText, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                        await commands['aizen_chat'](sock, msg, trimmedText, { isMaster, sender: senderJid, senderNumber: senderPhone });
                     } catch (err) {
                         console.error('[AIZEN] Interceptor error:', err);
                     }
@@ -346,7 +352,7 @@ async function handleMessage(sock, chatUpdate) {
             } else if (detectedAgent === 'jarvis' && config.jarvisChats?.includes(jid)) {
                 if (commands['jarvis_chat']) {
                     try {
-                        await commands['jarvis_chat'](sock, msg, trimmedText, { isOwner, isSudo, sender: senderJid, senderNumber: senderPhone });
+                        await commands['jarvis_chat'](sock, msg, trimmedText, { isMaster, sender: senderJid, senderNumber: senderPhone });
                     } catch (err) {
                         console.error('[JARVIS] Interceptor error:', err);
                     }
