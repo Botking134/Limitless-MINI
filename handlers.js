@@ -1,9 +1,9 @@
 /**
  * handlers.js – Master + Masters (LID‑based)
- * Stores resolved LIDs for master and secondary masters in state.json.
+ * All master/masters logic delegated to core.js.
  */
-
 const config = require('./config');
+const core = require('./core');               // 🆕 single source of truth
 const commands = require('./commands');
 const fs = require('fs');
 const path = require('path');
@@ -28,30 +28,15 @@ const BUTTON_ID_MAP = {
     "menu_back": "menu_back"
 };
 
-// ─── STATE PATH ──────────────────────────────────────────────────
+// ─── STATE PATH (for dynamic settings only – not master/masters) ──
 const STATE_PATH = path.join(__dirname, 'storage', 'state.json');
 
 // ─── HELPERS ──────────────────────────────────────────────────────
-
-function normalizeJid(input) {
-    if (!input) return '';
-    const clean = String(input).replace(/:[\d]+@/, '@');
-    if (clean.endsWith('@s.whatsapp.net') || clean.endsWith('@lid')) return clean;
-    const raw = clean.split('@')[0].replace(/[^0-9]/g, '');
-    return raw ? `${raw}@s.whatsapp.net` : '';
-}
-
 function ensureArray(value) {
     if (Array.isArray(value)) return value;
     if (value === undefined || value === null) return [];
     if (typeof value === 'string') return [value];
     return [];
-}
-
-function normalizeJidList(list) {
-    return ensureArray(list)
-        .map(item => normalizeJid(item))
-        .filter(Boolean);
 }
 
 function loadState() {
@@ -65,19 +50,14 @@ function loadState() {
                 'conversationLogs', 'antilink', 'antigm', 'antispam',
                 'antigcstatus', 'antipromote', 'antidemote',
                 'warns', 'warnThreshold', 'dailyActivity', 'totalMessages',
-                'botJid', 'botLid',
-                'masterLid', 'mastersLids'  // <-- store resolved LIDs
+                'botJid', 'botLid'
+                // master/masters LIDs are now in core.json – not here
             ];
             for (const key of keys) {
                 if (data[key] !== undefined) config[key] = data[key];
             }
-            // Normalize master and masters from state (if they were stored as phone JIDs)
-            if (data.master) config.master = normalizeJid(data.master);
-            if (data.masters) config.masters = normalizeJidList(data.masters);
-            if (data.botJid) config.botJid = normalizeJid(data.botJid);
-            if (data.botLid) config.botLid = normalizeJid(data.botLid);
-            if (data.masterLid) config.masterLid = normalizeJid(data.masterLid);
-            if (data.mastersLids) config.mastersLids = normalizeJidList(data.mastersLids);
+            if (data.botJid) config.botJid = core._normalizeJid(data.botJid);
+            if (data.botLid) config.botLid = core._normalizeJid(data.botLid);
         }
     } catch (e) {
         console.warn('[STATE] Failed to load state:', e.message);
@@ -96,8 +76,7 @@ function saveState() {
             'conversationLogs', 'antilink', 'antigm', 'antispam',
             'antigcstatus', 'antipromote', 'antidemote',
             'warns', 'warnThreshold', 'dailyActivity', 'totalMessages',
-            'botJid', 'botLid',
-            'master', 'masters', 'masterLid', 'mastersLids'
+            'botJid', 'botLid'
         ];
         for (const key of keys) {
             if (config[key] !== undefined) state[key] = config[key];
@@ -109,13 +88,6 @@ function saveState() {
 }
 global.saveState = saveState;
 
-// Normalize config on load
-if (config.master) config.master = normalizeJid(config.master);
-config.masters = normalizeJidList(config.masters);
-if (config.botJid) config.botJid = normalizeJid(config.botJid);
-if (config.botLid) config.botLid = normalizeJid(config.botLid);
-if (config.masterLid) config.masterLid = normalizeJid(config.masterLid);
-if (config.mastersLids) config.mastersLids = normalizeJidList(config.mastersLids);
 loadState();
 
 console.log(`📊 [HANDLERS] Commands loaded: ${Object.keys(commands).length}`);
@@ -144,16 +116,16 @@ function isBotAddressed(sock, msg) {
                         rawIncoming?.imageMessage?.contextInfo ||
                         rawIncoming?.videoMessage?.contextInfo;
 
-    const botJid = sock.user?.id ? normalizeJid(sock.user.id) : '';
-    const botLid = sock.user?.lid ? normalizeJid(sock.user.lid) : (config.botLid || '');
+    const botJid = sock.user?.id ? core._normalizeJid(sock.user.id) : '';
+    const botLid = sock.user?.lid ? core._normalizeJid(sock.user.lid) : (config.botLid || '');
 
-    const quotedParticipant = contextInfo?.participant ? normalizeJid(contextInfo.participant) : '';
+    const quotedParticipant = contextInfo?.participant ? core._normalizeJid(contextInfo.participant) : '';
     if (quotedParticipant && (quotedParticipant === botJid || (botLid && quotedParticipant === botLid))) {
         return true;
     }
 
     const mentions = contextInfo?.mentionedJid || [];
-    const normalizedMentions = mentions.map(m => normalizeJid(m));
+    const normalizedMentions = mentions.map(m => core._normalizeJid(m));
     if (normalizedMentions.includes(botJid) || (botLid && normalizedMentions.includes(botLid))) {
         return true;
     }
@@ -167,40 +139,6 @@ const EMOJI_MAP = {
     ping2: '⚡',
     shazam: '🎶'
 };
-
-// ─── RESOLVE MASTER / MASTERS LIDs ─────────────────────────────
-function resolveMasterLids(sock, senderJid, senderPhone) {
-    // Check if senderJid is a LID
-    const isLid = senderJid.endsWith('@lid');
-    if (!isLid) return; // Only resolve LIDs
-
-    // Check if this sender's phone number matches the primary master
-    if (config.master && senderPhone === config.master.split('@')[0]) {
-        if (config.masterLid !== senderJid) {
-            config.masterLid = senderJid;
-            console.log(`👑 Master LID resolved: ${senderJid}`);
-            saveState();
-        }
-        return;
-    }
-
-    // Check if this sender's phone number matches any secondary master
-    if (Array.isArray(config.masters) && config.masters.length > 0) {
-        const matchingMaster = config.masters.find(m => m.split('@')[0] === senderPhone);
-        if (matchingMaster) {
-            // Ensure mastersLids array exists
-            if (!Array.isArray(config.mastersLids)) config.mastersLids = [];
-            if (!config.mastersLids.includes(senderJid)) {
-                config.mastersLids.push(senderJid);
-                console.log(`👑 Secondary master LID resolved: ${senderJid}`);
-                saveState();
-            }
-            return;
-        }
-    }
-
-    // Also check if senderJid already matches any stored LID (no action needed)
-}
 
 // ─── MESSAGE HANDLER ─────────────────────────────────────────────
 async function handleMessage(sock, chatUpdate) {
@@ -222,7 +160,7 @@ async function handleMessage(sock, chatUpdate) {
 
     const jid = msg.key.remoteJid;
     const sender = msg.key.participant || msg.key.remoteJid || '';
-    const senderJid = normalizeJid(sender);
+    const senderJid = core._normalizeJid(sender);
     const senderPhone = senderJid.endsWith('@lid') ? null : senderJid.split('@')[0];
 
     // ─── GCLOG RECORDING ────────────────────────────────────────
@@ -237,28 +175,29 @@ async function handleMessage(sock, chatUpdate) {
         if (config.conversationLogs[jid].length % 10 === 0) saveState();
     }
 
-    // ─── RESOLVE LIDs FOR MASTER / MASTERS ─────────────────────
-    // If senderJid is a LID and matches master phone, store it
-    if (senderJid.endsWith('@lid') && senderPhone) {
-        resolveMasterLids(sock, senderJid, senderPhone);
+    // ─── LID RESOLUTION (update master/secondary LIDs on the fly) ──
+    if (senderPhone) {
+        const masterJid = core.getMasterJid();
+        const masterPhone = masterJid ? masterJid.split('@')[0] : null;
+        if (masterPhone && senderPhone === masterPhone) {
+            // This sender is the master; update master LID if we received a LID message
+            if (senderJid.endsWith('@lid') && core.getMasterLid() !== senderJid) {
+                core.updateMasterLid(senderJid);
+                console.log(`👑 Master LID updated: ${senderJid}`);
+            }
+        } else {
+            // Check secondary masters
+            const mastersJids = core.getMastersJid();
+            const matchedMaster = mastersJids.find(jid => jid.split('@')[0] === senderPhone);
+            if (matchedMaster && senderJid.endsWith('@lid')) {
+                core.addMasterLid(senderJid);
+                console.log(`👑 Secondary master LID added: ${senderJid}`);
+            }
+        }
     }
 
-    // ─── PERMISSION CONTEXT ─────────────────────────────────────
-    // Primary master: check phone JID + LID
-    const masterPhoneJid = config.master ? normalizeJid(config.master) : '';
-    const masterLid = config.masterLid ? normalizeJid(config.masterLid) : '';
-
-    // Secondary masters: check phone JIDs + LIDs
-    const masterPhoneJids = Array.isArray(config.masters) ? config.masters.map(m => normalizeJid(m)).filter(Boolean) : [];
-    const mastersLids = Array.isArray(config.mastersLids) ? config.mastersLids.map(m => normalizeJid(m)).filter(Boolean) : [];
-
-    const isMaster =
-        senderJid === masterPhoneJid ||
-        senderJid === masterLid ||
-        masterPhoneJids.includes(senderJid) ||
-        mastersLids.includes(senderJid) ||
-        (senderPhone && masterPhoneJid && senderPhone === masterPhoneJid.split('@')[0]) ||
-        (senderPhone && masterPhoneJids.some(p => p.split('@')[0] === senderPhone));
+    // ─── PERMISSION CHECK (SINGLE CALL TO CORE) ──────────────────
+    const isMaster = core.isMaster(senderJid);
 
     // ─── PUBLIC MODE CHECK ─────────────────────────────────────
     if (!config.isPublic && !isMaster) {
@@ -267,9 +206,15 @@ async function handleMessage(sock, chatUpdate) {
 
     // ─── OWNER MENTION REACTION ─────────────────────────────────
     const mentioned = getMentionedJids(msg);
-    const allMasters = [masterPhoneJid, masterLid, ...masterPhoneJids, ...mastersLids].filter(Boolean);
+    const allMasterIds = [
+        core.getMasterJid(),
+        core.getMasterLid(),
+        ...core.getMastersJid(),
+        ...core.getMastersLid()
+    ].filter(Boolean);
+
     let masterMentioned = false;
-    if (allMasters.length > 0 && mentioned.some(m => allMasters.includes(normalizeJid(m)))) {
+    if (mentioned.some(m => allMasterIds.includes(core._normalizeJid(m)))) {
         masterMentioned = true;
     }
     if (masterMentioned && !msg.key.fromMe) {
