@@ -4,6 +4,10 @@ const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+
+// SSL-ignoring agent to bypass hosting certificate validation errors
+const sslAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ─── STATE (for sessions) ──────────────────────────────────────
 global.songSessions = global.songSessions || {};
@@ -31,12 +35,14 @@ function getRawMessage(message) {
     return message;
 }
 
+// Fixed: Uses axios with an SSL-ignoring agent to download media buffer safely on hosting platforms
 async function fetchBuffer(url) {
     if (!url) throw new Error('No URL provided');
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+    const response = await axios.get(url, { 
+        responseType: 'arraybuffer',
+        httpsAgent: sslAgent
+    });
+    return Buffer.from(response.data);
 }
 
 async function downloadMedia(apiUrl, params = {}, method = 'GET') {
@@ -46,7 +52,8 @@ async function downloadMedia(apiUrl, params = {}, method = 'GET') {
             url: apiUrl,
             params: method === 'GET' ? params : undefined,
             data: method === 'POST' ? params : undefined,
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            httpsAgent: sslAgent
         });
         return response.data;
     } catch (err) {
@@ -142,10 +149,9 @@ async function handleTgsReply(sock, msg, session, userReply) {
         return await sock.sendMessage(jid, { text: "❌ This sticker has no file_id." });
     }
     try {
-        // Use Telegram Bot API to get the file
         const token = session.token;
         const fileUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${sticker.file_id}`;
-        const fileRes = await axios.get(fileUrl);
+        const fileRes = await axios.get(fileUrl, { httpsAgent: sslAgent });
         if (!fileRes.data.ok) throw new Error('Failed to get file path');
         const filePath = fileRes.data.result.file_path;
         const downloadUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
@@ -163,7 +169,6 @@ async function handleLyricsReply(sock, msg, session, userReply) {
         return await sock.sendMessage(jid, { text: `❌ Invalid selection. Please choose a number between 1 and ${session.results.length}.` });
     }
     const result = session.results[num - 1];
-    // For now, send the URL – you can implement scraping if needed
     await sock.sendMessage(jid, {
         text: `🎵 *${result.full_title}*\n\n📝 *Lyrics:* Please view at: ${result.url}`
     });
@@ -188,9 +193,9 @@ module.exports = [
     {
         name: 'fb',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a Facebook video URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Facebook video..." }, { quoted: msg });
             try {
@@ -218,9 +223,9 @@ module.exports = [
     {
         name: 'tt',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a TikTok video URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching TikTok video..." }, { quoted: msg });
             try {
@@ -247,9 +252,10 @@ module.exports = [
     {
         name: 'yt',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const parts = args?.trim().split(' ') || [];
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const parts = argsStr.split(' ');
             let url = parts[0];
             let type = 'video';
             if (parts.length > 1) {
@@ -289,9 +295,9 @@ module.exports = [
     {
         name: 'ig',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide an Instagram URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Instagram media..." }, { quoted: msg });
             try {
@@ -323,9 +329,9 @@ module.exports = [
     {
         name: 'x',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a Twitter/X URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Twitter/X media..." }, { quoted: msg });
             try {
@@ -352,9 +358,9 @@ module.exports = [
     {
         name: 'spotify',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a Spotify track URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Spotify track..." }, { quoted: msg });
             try {
@@ -373,9 +379,9 @@ module.exports = [
     {
         name: 'pinterest',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a Pinterest pin URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Pinterest media..." }, { quoted: msg });
             try {
@@ -394,9 +400,9 @@ module.exports = [
     {
         name: 'mediafire',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a MediaFire link." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching MediaFire file..." }, { quoted: msg });
             try {
@@ -422,9 +428,9 @@ module.exports = [
     {
         name: 'gdrive',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Please provide a Google Drive link." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching Google Drive file..." }, { quoted: msg });
             try {
@@ -450,9 +456,9 @@ module.exports = [
     {
         name: 'obf',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            let code = args?.trim() || '';
+            let code = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
             let level = 'medium';
             const firstWord = code.split(' ')[0]?.toLowerCase();
             if (['low', 'medium', 'high'].includes(firstWord)) {
@@ -492,9 +498,9 @@ module.exports = [
     {
         name: 'song',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const query = args?.trim();
+            const query = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
             if (!query) return await sock.sendMessage(jid, { text: "❌ Provide a song name." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "🔍 Searching..." }, { quoted: msg });
             try {
@@ -516,9 +522,9 @@ module.exports = [
     {
         name: 'play',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const query = args?.trim();
+            const query = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
             if (!query) return await sock.sendMessage(jid, { text: "❌ Provide a song name." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Fetching song..." }, { quoted: msg });
             try {
@@ -541,13 +547,13 @@ module.exports = [
         }
     },
 
-    // 13. Telegram Stickers (using Telegram Bot API)
+    // 13. Telegram Stickers
     {
         name: 'tgs',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Provide Telegram sticker pack URL.\nExample: `.tgs https://t.me/addstickers/doakesreactions`" }, { quoted: msg });
 
             const statusMsg = await sock.sendMessage(jid, { text: "⏳ Fetching sticker pack via Telegram API..." }, { quoted: msg });
@@ -571,7 +577,7 @@ module.exports = [
 
             try {
                 const apiUrl = `https://api.telegram.org/bot${token}/getStickerSet?name=${packName}`;
-                const response = await axios.get(apiUrl);
+                const response = await axios.get(apiUrl, { httpsAgent: sslAgent });
                 const data = response.data;
                 if (!data.ok) throw new Error(data.description || 'Telegram API error');
 
@@ -611,9 +617,9 @@ module.exports = [
     {
         name: 'apk',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const query = args?.trim();
+            const query = (args && args[0]) ? args[0].trim() : '';
             if (!query) return await sock.sendMessage(jid, { text: "❌ Provide an app name (e.g., whatsapp)." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Searching APK..." }, { quoted: msg });
             try {
@@ -639,9 +645,9 @@ module.exports = [
     {
         name: 'web',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const url = args?.trim();
+            const url = (args && args[0]) ? args[0].trim() : '';
             if (!url) return await sock.sendMessage(jid, { text: "❌ Provide a website URL." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "⏳ Downloading website..." }, { quoted: msg });
             try {
@@ -666,9 +672,9 @@ module.exports = [
     {
         name: 'lyrics',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const query = args?.trim();
+            const query = (args && args[0]) ? args[0].trim() : '';
             if (!query) return await sock.sendMessage(jid, { text: "❌ Provide song name/artist." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "🔍 Searching lyrics..." }, { quoted: msg });
             try {
@@ -694,9 +700,10 @@ module.exports = [
     {
         name: 'img',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const parts = args?.trim().split(' ') || [];
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const parts = argsStr.split(' ');
             let count = 1;
             let query = parts.join(' ');
             const first = parts[0];
@@ -726,9 +733,9 @@ module.exports = [
     {
         name: 'xvid',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const query = args?.trim();
+            const query = (args && args[0]) ? args[0].trim() : '';
             if (!query) return await sock.sendMessage(jid, { text: "❌ Provide a search term." }, { quoted: msg });
             await sock.sendMessage(jid, { text: "🔍 Searching XVID..." }, { quoted: msg });
             try {
@@ -750,13 +757,13 @@ module.exports = [
         }
     },
 
-    // 19. Shazam (supports URL + audio messages)
+    // 19. Shazam
     {
         name: 'shazam',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            let audioUrl = args?.trim() || '';
+            let audioUrl = (args && args[0]) ? args[0].trim() : '';
 
             async function uploadToCloud(buffer, mimeType) {
                 let ext = mimeType.split('/')[1] || 'bin';
@@ -767,7 +774,8 @@ module.exports = [
                     const form = new FormData();
                     form.append('files[]', buffer, { filename, contentType: mimeType });
                     const response = await axios.post('https://qu.ax/upload.php', form, {
-                        headers: { ...form.getHeaders() }
+                        headers: { ...form.getHeaders() },
+                        httpsAgent: sslAgent
                     });
                     if (response.data?.success && response.data.files?.[0]?.url) {
                         return response.data.files[0].url.trim();
@@ -781,7 +789,8 @@ module.exports = [
                     form.append('reqtype', 'fileupload');
                     form.append('fileToUpload', buffer, { filename, contentType: mimeType });
                     const response = await axios.post('https://catbox.moe/user/api.php', form, {
-                        headers: { ...form.getHeaders() }
+                        headers: { ...form.getHeaders() },
+                        httpsAgent: sslAgent
                     });
                     if (response.data && typeof response.data === 'string' && response.data.startsWith('http')) {
                         return response.data.trim();
