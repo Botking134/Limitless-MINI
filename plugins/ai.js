@@ -4,6 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const { PassThrough } = require('stream');
+const https = require('https');
+const axios = require('axios');
+
+// SSL-ignoring agent to bypass hosting certificate validation errors
+const sslAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ─── CONVERT MP3 TO OGG/OPUS ─────────────────────────────────────
 function convertMp3ToOgg(mp3Buffer) {
@@ -207,7 +212,7 @@ module.exports = [
             const jid = msg.key.remoteJid;
             if (!isMaster) return;
 
-            const action = args?.trim().toLowerCase() || '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             let enable = false;
 
             if (action === 'on' || action === 'rise') {
@@ -230,7 +235,7 @@ module.exports = [
     {
         name: 'aizen_chat',
         isPrefixless: true,
-        execute: async (sock, msg, args, { isMaster, senderNumber }) => {
+        execute: async (sock, msg, args, { isMaster }) => {
             const jid = msg.key.remoteJid;
             if (!config.aizenChats?.includes(jid)) return;
             const lowerQuery = args ? args.toLowerCase().trim() : '';
@@ -291,7 +296,7 @@ module.exports = [
             const jid = msg.key.remoteJid;
             if (!isMaster) return;
 
-            const action = args?.trim().toLowerCase() || '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             let enable = false;
 
             if (action === 'on') {
@@ -314,7 +319,7 @@ module.exports = [
     {
         name: 'jarvis_chat',
         isPrefixless: true,
-        execute: async (sock, msg, args, { isMaster, senderNumber }) => {
+        execute: async (sock, msg, args, { isMaster }) => {
             const jid = msg.key.remoteJid;
             if (!config.jarvisChats?.includes(jid)) return;
             const lowerQuery = args ? args.toLowerCase().trim() : '';
