@@ -2,6 +2,11 @@
 const config = require('../config');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const axios = require('axios');
+
+// SSL-ignoring agent to bypass hosting certificate validation errors
+const sslAgent = new https.Agent({ rejectUnauthorized: false });
 
 const STATE_PATH = path.join(__dirname, '..', 'storage', 'state.json');
 
@@ -100,8 +105,10 @@ function parseTargetUser(msg, args) {
     if (contextInfo?.participant) {
         return normalizeToJid(contextInfo.participant);
     }
-    if (args) {
-        const cleanDigits = args.replace(/[^0-9]/g, '');
+    
+    const argsStr = Array.isArray(args) ? args.join(' ') : (args || '');
+    if (argsStr) {
+        const cleanDigits = argsStr.replace(/[^0-9]/g, '');
         if (cleanDigits.length >= 7) {
             return `${cleanDigits}@s.whatsapp.net`;
         }
@@ -230,7 +237,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'welcome');
             if (!isAuthorized) return;
 
-            const action = args ? args.toLowerCase().trim() : '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (action === 'on') {
                 config.welcome[jid] = config.welcome[jid] || { active: true, text: 'Welcome @user!', images: [] };
                 config.welcome[jid].active = true;
@@ -258,7 +265,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'goodbye');
             if (!isAuthorized) return;
 
-            const action = args ? args.toLowerCase().trim() : '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (action === 'on') {
                 config.goodbye[jid] = config.goodbye[jid] || { active: true, text: 'Goodbye @user!', images: [] };
                 config.goodbye[jid].active = true;
@@ -286,14 +293,15 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'setwelcome');
             if (!isAuthorized) return;
 
-            if (!args) return await sock.sendMessage(jid, { text: "❌ Provide a message. Example: .setwelcome Hello @user! --image https://example.com/img.jpg" });
+            const fullText = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!fullText) return await sock.sendMessage(jid, { text: "❌ Provide a message. Example: .setwelcome Hello @user! --image https://example.com/img.jpg" });
 
-            let text = args;
+            let text = fullText;
             let images = [];
-            const imageIndex = args.indexOf('--image');
+            const imageIndex = fullText.indexOf('--image');
             if (imageIndex !== -1) {
-                const before = args.substring(0, imageIndex).trim();
-                const after = args.substring(imageIndex + 7).trim();
+                const before = fullText.substring(0, imageIndex).trim();
+                const after = fullText.substring(imageIndex + 7).trim();
                 text = before || 'Welcome @user!';
                 if (after) {
                     images = after.split(/\s+/).filter(url => url.startsWith('http'));
@@ -314,14 +322,15 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'setgoodbye');
             if (!isAuthorized) return;
 
-            if (!args) return await sock.sendMessage(jid, { text: "❌ Provide a message. Example: .setgoodbye Farewell @user! --image https://example.com/img.jpg" });
+            const fullText = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!fullText) return await sock.sendMessage(jid, { text: "❌ Provide a message. Example: .setgoodbye Farewell @user! --image https://example.com/img.jpg" });
 
-            let text = args;
+            let text = fullText;
             let images = [];
-            const imageIndex = args.indexOf('--image');
+            const imageIndex = fullText.indexOf('--image');
             if (imageIndex !== -1) {
-                const before = args.substring(0, imageIndex).trim();
-                const after = args.substring(imageIndex + 7).trim();
+                const before = fullText.substring(0, imageIndex).trim();
+                const after = fullText.substring(imageIndex + 7).trim();
                 text = before || 'Goodbye @user!';
                 if (after) {
                     images = after.split(/\s+/).filter(url => url.startsWith('http'));
@@ -346,7 +355,8 @@ module.exports = [
 
             if (!config.gcalerts) config.gcalerts = { promote: {}, demote: {}, welcome: {}, goodbye: {} };
 
-            if (!args) {
+            const fullText = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!fullText) {
                 const prom = config.gcalerts.promote?.[jid] || 'off';
                 const dem = config.gcalerts.demote?.[jid] || 'off';
                 const wel = config.gcalerts.welcome?.[jid] || 'off';
@@ -369,14 +379,13 @@ module.exports = [
                 return;
             }
 
-            const parts = args.split(' ');
+            const parts = fullText.split(' ');
             const sub = parts[0].toLowerCase();
             const toggle = parts[1]?.toLowerCase();
             if (!['promote', 'demote', 'welcome', 'goodbye'].includes(sub) || !['on', 'off'].includes(toggle)) {
                 return await sock.sendMessage(jid, { text: "❌ Usage: .gcalerts <promote/demote/welcome/goodbye> <on/off>" });
             }
             config.gcalerts[sub][jid] = toggle;
-            // Also update welcome/goodbye active status
             if (sub === 'welcome') {
                 if (!config.welcome[jid]) config.welcome[jid] = { active: false, text: 'Welcome @user!', images: [] };
                 config.welcome[jid].active = (toggle === 'on');
@@ -400,7 +409,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'gclog');
             if (!isAuthorized) return;
 
-            const action = args ? args.toLowerCase().trim() : '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (action === 'on') {
                 config.gclogActive[jid] = true;
                 if (global.gclogIntervals[jid]) clearInterval(global.gclogIntervals[jid]);
@@ -441,7 +450,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'kickall');
             if (!isAuthorized) return;
 
-            const duration = args ? parseDuration(args) : 20000;
+            const duration = (args && args[0]) ? parseDuration(args[0]) : 20000;
             if (!duration) return await sock.sendMessage(jid, { text: "❌ Invalid duration (e.g., 10s, 2m, 1h)." });
 
             const groupMetadata = await sock.groupMetadata(jid);
@@ -510,10 +519,9 @@ module.exports = [
                 return await sock.sendMessage(jid, { text: "❌ Cannot kick owner or developer." });
             }
 
-            // Check for timer
             let timer = 0;
             if (args) {
-                const parts = args.split(' ');
+                const parts = Array.isArray(args) ? args : args.split(' ');
                 for (const part of parts) {
                     const dur = parseDuration(part);
                     if (dur) timer = dur;
@@ -543,10 +551,11 @@ module.exports = [
     {
         name: 'join',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            if (!args) return await sock.sendMessage(jid, { text: "❌ Provide an invite link." });
-            const match = args.match(/chat.whatsapp.com\/([a-zA-Z0-9]{15,25})/);
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!argsStr) return await sock.sendMessage(jid, { text: "❌ Provide an invite link." });
+            const match = argsStr.match(/chat.whatsapp.com\/([a-zA-Z0-9]{15,25})/);
             if (!match) return await sock.sendMessage(jid, { text: "❌ Invalid invite link." });
             try {
                 const code = match[1];
@@ -562,9 +571,9 @@ module.exports = [
     {
         name: 'exit',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const target = args ? args.trim() : jid;
+            const target = (args && args[0]) ? args[0].trim() : jid;
             if (!target.endsWith('@g.us')) return await sock.sendMessage(jid, { text: "❌ Not a group." });
             try {
                 await sock.sendMessage(target, { text: "👋 Leaving group." });
@@ -616,7 +625,7 @@ module.exports = [
                     else msgObj.audioMessage = prepared.audioMessage;
                     messagePayload = { groupStatusMessageV2: { message: msgObj } };
                 } else {
-                    const text = args || quoted?.conversation || quoted?.extendedTextMessage?.text || '';
+                    const text = (Array.isArray(args) ? args.join(' ').trim() : args) || quoted?.conversation || quoted?.extendedTextMessage?.text || '';
                     if (!text) return await sock.sendMessage(jid, { text: "❌ Provide text or reply to media." });
                     const randomHex = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
                     const bgColor = 0xff000000 + parseInt(randomHex, 16);
@@ -636,11 +645,12 @@ module.exports = [
     {
         name: 'togcjid',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const targetJid = args ? args.split(' ')[0] : '';
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const targetJid = argsStr ? argsStr.split(' ')[0] : '';
             if (!targetJid || !targetJid.endsWith('@g.us')) return await sock.sendMessage(jid, { text: "❌ Provide a valid group JID." });
-            const remaining = args.replace(targetJid, '').trim();
+            const remaining = argsStr.replace(targetJid, '').trim();
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             const rawContent = quoted ? getRawMessage(quoted) : null;
             try {
@@ -734,9 +744,10 @@ module.exports = [
     {
         name: 'poll',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            const match = args ? args.match(/^(.+?)\s*\((.+?)\)$/) : null;
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const match = argsStr ? argsStr.match(/^(.+?)\s*\((.+?)\)$/) : null;
             if (!match) return await sock.sendMessage(jid, { text: "❌ Format: Question? (Option1/Option2)" });
             const question = match[1].trim();
             const options = match[2].split('/').map(o => o.trim()).filter(o => o);
@@ -761,7 +772,7 @@ module.exports = [
 
             const groupMetadata = await sock.groupMetadata(jid);
             const participants = groupMetadata.participants.map(p => p.id);
-            const text = args || '👥';
+            const text = (Array.isArray(args) ? args.join(' ').trim() : args) || '👥';
             await sock.sendMessage(jid, { text, mentions: participants });
             try { await sock.sendMessage(jid, { delete: msg.key }); } catch (e) {}
         }
@@ -777,7 +788,8 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'spamtag');
             if (!isAuthorized) return;
 
-            const parts = args ? args.split(' ') : [];
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const parts = argsStr.split(' ');
             let count = parseInt(parts[0]) || 3;
             if (count < 1 || count > 30) count = 3;
             const text = parts.slice(1).join(' ') || '📢';
@@ -802,7 +814,7 @@ module.exports = [
 
             const groupMetadata = await sock.groupMetadata(jid);
             const participants = groupMetadata.participants.map(p => p.id);
-            const text = args || '📢 Attention everyone!';
+            const text = (Array.isArray(args) ? args.join(' ').trim() : args) || '📢 Attention everyone!';
             await sock.sendMessage(jid, { text, mentions: participants });
         }
     },
@@ -817,15 +829,16 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'mute');
             if (!isAuthorized) return;
 
-            if (!args) {
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!argsStr) {
                 const buttons = [
-                    { buttonId: `${config.prefix}mute close`, buttonText: { displayText: 'Mute 🔒' }, type: 1 },
-                    { buttonId: `${config.prefix}mute open`, buttonText: { displayText: 'Unmute 🔓' }, type: 1 }
+                    { buttonId: `mute close`, buttonText: { displayText: 'Mute 🔒' }, type: 1 },
+                    { buttonId: `mute open`, buttonText: { displayText: 'Unmute 🔓' }, type: 1 }
                 ];
                 await sock.sendMessage(jid, { text: "🔒 *Group Mute Settings*", buttons, headerType: 1 }, { quoted: msg });
                 return;
             }
-            const parts = args.split(' ');
+            const parts = argsStr.split(' ');
             const action = parts[0].toLowerCase();
             const timer = parts[1] ? parseDuration(parts[1]) : null;
 
@@ -1033,7 +1046,8 @@ module.exports = [
             if (!isAuthorized) return;
 
             const actions = ['off', 'delete', 'warn', 'kick'];
-            if (!args) {
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
+            if (!action) {
                 const current = config.antilink[jid] || 'off';
                 const buttons = actions.map(a => ({
                     buttonId: `${config.prefix}antilink ${a}`,
@@ -1043,7 +1057,6 @@ module.exports = [
                 await sock.sendMessage(jid, { text: `🔗 Antilink: ${current}`, buttons, headerType: 1 }, { quoted: msg });
                 return;
             }
-            const action = args.toLowerCase().trim();
             if (!actions.includes(action)) return await sock.sendMessage(jid, { text: "❌ Use off/delete/warn/kick" });
             config.antilink[jid] = action;
             saveState();
@@ -1062,7 +1075,8 @@ module.exports = [
             if (!isAuthorized) return;
 
             const actions = ['off', 'delete', 'warn', 'kick'];
-            if (!args) {
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
+            if (!action) {
                 const current = config.antigm[jid] || 'off';
                 const buttons = actions.map(a => ({
                     buttonId: `${config.prefix}antigm ${a}`,
@@ -1072,7 +1086,6 @@ module.exports = [
                 await sock.sendMessage(jid, { text: `🚫 Antigm: ${current}`, buttons, headerType: 1 }, { quoted: msg });
                 return;
             }
-            const action = args.toLowerCase().trim();
             if (!actions.includes(action)) return await sock.sendMessage(jid, { text: "❌ Use off/delete/warn/kick" });
             config.antigm[jid] = action;
             saveState();
@@ -1090,13 +1103,14 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'antispam');
             if (!isAuthorized) return;
 
-            if (!args) {
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            if (!argsStr) {
                 const status = config.antispam[jid]?.status || 'off';
                 const rate = config.antispam[jid]?.rate || { count: 1, seconds: 2 };
                 await sock.sendMessage(jid, { text: `🛡️ Antispam: ${status}\nThreshold: ${rate.count}/${rate.seconds}s` });
                 return;
             }
-            const parts = args.split(' ');
+            const parts = argsStr.split(' ');
             const action = parts[0].toLowerCase();
             if (action === 'on') {
                 if (!config.antispam[jid]) config.antispam[jid] = { status: 'on', rate: { count: 1, seconds: 2 } };
@@ -1135,7 +1149,8 @@ module.exports = [
             if (!isAuthorized) return;
 
             const actions = ['off', 'delete', 'warn', 'kick'];
-            if (!args) {
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
+            if (!action) {
                 const current = config.antigcstatus || 'off';
                 const buttons = actions.map(a => ({
                     buttonId: `${config.prefix}antigcstatus ${a}`,
@@ -1145,7 +1160,6 @@ module.exports = [
                 await sock.sendMessage(jid, { text: `🛡️ Antigcstatus: ${current}`, buttons, headerType: 1 }, { quoted: msg });
                 return;
             }
-            const action = args.toLowerCase().trim();
             if (!actions.includes(action)) return await sock.sendMessage(jid, { text: "❌ Use off/delete/warn/kick" });
             config.antigcstatus = action;
             saveState();
@@ -1163,7 +1177,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'antipromote');
             if (!isAuthorized) return;
 
-            const action = args ? args.toLowerCase().trim() : '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (action === 'on') {
                 config.antipromote[jid] = 'on';
                 saveState();
@@ -1189,7 +1203,7 @@ module.exports = [
             const isAuthorized = await verifyPermissions(sock, msg, jid, isOwner, isDev, isSudo, 'antidemote');
             if (!isAuthorized) return;
 
-            const action = args ? args.toLowerCase().trim() : '';
+            const action = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (action === 'on') {
                 config.antidemote[jid] = 'on';
                 saveState();
@@ -1248,9 +1262,10 @@ module.exports = [
             if (!target) return await sock.sendMessage(jid, { text: "❌ Mention or reply to a user." });
             if (isDeveloper(target) || isOwnerTarget(target)) return await sock.sendMessage(jid, { text: "❌ Cannot silence owner/developer." });
 
-            const rest = args.replace(/@[^ ]+/g, '').trim();
+            const argsStr = Array.isArray(args) ? args.join(' ').trim() : (args || '').trim();
+            const rest = argsStr.replace(/@[^ ]+/g, '').trim();
             const parts = rest.split(' ');
-            let type = 'all'; // sticker, message, all
+            let type = 'all';
             let timer = '1h';
             if (parts[0] && ['-s', '-m'].includes(parts[0])) {
                 type = parts[0] === '-s' ? 'sticker' : 'message';
@@ -1270,9 +1285,8 @@ module.exports = [
     {
         name: 'silence_ans',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo, isDev }) => {
-            // This is a button response, not a user‑typed command, but we'll handle it.
-            const parts = args ? args.split(' ') : [];
+        execute: async (sock, msg, args) => {
+            const parts = Array.isArray(args) ? args : (args ? args.split(' ') : []);
             const type = parts[0];
             const targetNum = parts[1];
             const timer = parts[2] || '1h';
@@ -1325,7 +1339,8 @@ module.exports = [
             if (!target) return await sock.sendMessage(jid, { text: "❌ Mention or reply to a user." });
             let count = 10;
             if (args) {
-                const num = parseInt(args);
+                const partsStr = Array.isArray(args) ? args.join(' ') : args;
+                const num = parseInt(partsStr);
                 if (!isNaN(num) && num > 0) count = Math.min(num, 50);
             }
             const store = global.messageStore || {};
