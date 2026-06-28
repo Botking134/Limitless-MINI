@@ -1,12 +1,9 @@
 // plugins/owner.js – Bleach: The Blade of the Soul Reaper
 const config = require('../config');
+const core = require('../core'); // Single source of truth
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-const { Sticker } = require('wa-sticker-formatter');
-const axios = require('axios');
-const FormData = require('form-data');
-const { downloadContentFromMessage } = require('@itsliaaa/baileys');
 
 // ─── STATE FILE ──────────────────────────────────────────────────
 const STATE_PATH = path.join(__dirname, '..', 'storage', 'state.json');
@@ -52,7 +49,7 @@ function parseTarget(msg, args) {
     if (ctx?.participant) return normalizeJid(ctx.participant);
     if (ctx?.mentionedJid && ctx.mentionedJid.length > 0) return normalizeJid(ctx.mentionedJid[0]);
     if (args) {
-        const clean = args.replace(/[^0-9]/g, '');
+        const clean = Array.isArray(args) ? (args.join('').replace(/[^0-9]/g, '')) : args.replace(/[^0-9]/g, '');
         if (clean.length >= 7) return `${clean}@s.whatsapp.net`;
     }
     return '';
@@ -87,8 +84,10 @@ function formatUptime(seconds) {
 function toggleState(key, subKey, jid, args) {
     const state = readState();
     if (!state.presence) state.presence = {};
-    const target = args ? args.toLowerCase().trim() : '';
     const chatKey = subKey || 'chats';
+
+    // Safely read args array
+    const target = (Array.isArray(args) && args[0]) ? args[0].toLowerCase().trim() : (typeof args === 'string' ? args.toLowerCase().trim() : '');
 
     if (target === 'on') {
         if (!state.presence[chatKey]) state.presence[chatKey] = [];
@@ -143,7 +142,7 @@ function readReminders() {
 }
 
 function writeReminders(reminders) {
-    const dir = path.dirname(REMINDERS_PATH);
+    const dir = path.dirname(NOTES_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(REMINDERS_PATH, JSON.stringify(reminders, null, 2), 'utf-8');
 }
@@ -196,8 +195,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Provide a new prefix.' });
-            const newPrefix = args.trim();
+            const newPrefix = (args && args[0]) ? args[0].trim() : '';
+            if (!newPrefix) return await sock.sendMessage(jid, { text: '❌ Provide a new prefix.' });
             config.prefix = newPrefix;
             const state = readState();
             state.prefix = newPrefix;
@@ -214,7 +213,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['cmd', 'all', 'off'].includes(mode)) {
                 return await sock.sendMessage(jid, { text: '❌ Usage: `autoreact cmd|all|off`' });
             }
@@ -242,11 +241,12 @@ module.exports = [
     {
         name: 'gitclone',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo }) => {
+        execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
-            if (!isOwner && !isSudo) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `gitclone username/repo`' });
-            const [owner, repo] = args.trim().split('/');
+            if (!isOwner) return;
+            const input = (args && args[0]) ? args[0].trim() : '';
+            if (!input) return await sock.sendMessage(jid, { text: '❌ Usage: `gitclone username/repo`' });
+            const [owner, repo] = input.split('/');
             if (!owner || !repo) return await sock.sendMessage(jid, { text: '❌ Invalid format. Use `username/repo`' });
             const statusMsg = await sock.sendMessage(jid, { text: `📥 Fetching ${owner}/${repo}...` });
             try {
@@ -290,8 +290,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `addnote <content>`' });
-            const content = args.trim();
+            const content = args ? args.join(' ').trim() : '';
+            if (!content) return await sock.sendMessage(jid, { text: '❌ Usage: `addnote <content>`' });
             const notes = readNotes();
             if (!notes[jid]) notes[jid] = {};
             const key = `note_${Date.now()}`;
@@ -308,8 +308,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `delnote <key>`' });
-            const key = args.trim();
+            const key = (args && args[0]) ? args[0].trim() : '';
+            if (!key) return await sock.sendMessage(jid, { text: '❌ Usage: `delnote <key>`' });
             const notes = readNotes();
             if (!notes[jid] || !notes[jid][key]) return await sock.sendMessage(jid, { text: '❌ Note not found.' });
             delete notes[jid][key];
@@ -325,8 +325,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `getnote <key>`' });
-            const key = args.trim();
+            const key = (args && args[0]) ? args[0].trim() : '';
+            if (!key) return await sock.sendMessage(jid, { text: '❌ Usage: `getnote <key>`' });
             const notes = readNotes();
             if (!notes[jid] || !notes[jid][key]) return await sock.sendMessage(jid, { text: '❌ Note not found.' });
             const note = notes[jid][key];
@@ -356,10 +356,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `reminder 10m text`' });
-            const parts = args.trim().split(' ');
-            const duration = parts[0];
-            const text = parts.slice(1).join(' ');
+            const duration = (args && args[0]) ? args[0].trim() : '';
+            const text = (args && args.length > 1) ? args.slice(1).join(' ') : '';
             if (!duration || !text) return await sock.sendMessage(jid, { text: '❌ Usage: `reminder 10m text`' });
             const ms = parseDuration(duration);
             if (!ms) return await sock.sendMessage(jid, { text: '❌ Invalid duration. Use e.g., 10s, 5m, 2h' });
@@ -385,7 +383,8 @@ module.exports = [
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
             const reminders = readReminders();
-            if (args && args.toLowerCase().trim() === 'cancel') {
+            const subCmd = (args && args[0]) ? args[0].toLowerCase().trim() : '';
+            if (subCmd === 'cancel') {
                 if (reminders.length === 0) return await sock.sendMessage(jid, { text: '❌ No active reminders.' });
                 let list = '';
                 reminders.forEach((r, i) => {
@@ -395,8 +394,8 @@ module.exports = [
                 await sock.sendMessage(jid, { text: `📋 *Active reminders:*\n${list}\nReply with \`remind abort <index>\`` });
                 return;
             }
-            if (args && args.toLowerCase().trim().startsWith('abort')) {
-                const idx = parseInt(args.toLowerCase().replace('abort', '').trim());
+            if (subCmd === 'abort') {
+                const idx = (args && args[1]) ? parseInt(args[1]) : NaN;
                 if (isNaN(idx) || idx < 1 || idx > reminders.length) return await sock.sendMessage(jid, { text: '❌ Invalid index.' });
                 const removed = reminders.splice(idx-1, 1);
                 writeReminders(reminders);
@@ -440,7 +439,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const target = args ? args.toLowerCase().trim() : '';
+            const target = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             const state = readState();
             if (!state.presence) state.presence = {};
             if (target === 'on' || target === 'all') {
@@ -462,7 +461,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const target = args ? args.toLowerCase().trim() : '';
+            const target = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             const state = readState();
             if (!state.presence) state.presence = {};
             if (target === 'on' || target === 'all') {
@@ -502,7 +501,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['-g', '-pm', '-all', '-off'].includes(mode)) {
                 return await sock.sendMessage(jid, { text: '❌ Usage: `antidelete -g|-pm|-all|-off`' });
             }
@@ -520,7 +519,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['-g', '-pm', '-all', '-off'].includes(mode)) {
                 return await sock.sendMessage(jid, { text: '❌ Usage: `antiviewonce -g|-pm|-all|-off`' });
             }
@@ -538,7 +537,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['on', 'off'].includes(mode)) return await sock.sendMessage(jid, { text: '❌ Usage: `antibug on/off`' });
             const state = readState();
             state.antibug = mode;
@@ -607,7 +606,6 @@ module.exports = [
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
             await sock.chatModify({ delete: true, lastMessages: [msg] }, jid);
-            // No response – silently clear.
         }
     },
 
@@ -618,7 +616,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['on', 'off'].includes(mode)) return await sock.sendMessage(jid, { text: '❌ Usage: `antipm on/off`' });
             const state = readState();
             state.antipm = mode;
@@ -627,7 +625,7 @@ module.exports = [
         }
     },
 
-    // 22. update – auto pull from GitHub (hardcoded repo)
+    // 22. update
     {
         name: 'update',
         isPrefixless: false,
@@ -642,7 +640,7 @@ module.exports = [
                 `git reset --hard origin/master || git reset --hard origin/main`,
                 `npm install --silent`
             ];
-            exec(cmds.join(' && '), async (err, stdout, stderr) => {
+            exec(cmds.join(' && '), async (err) => {
                 if (err) {
                     await sock.sendMessage(jid, { text: `❌ Update failed:\n${err.message}` });
                 } else {
@@ -660,11 +658,12 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Provide an emoji.' });
+            const emoji = (args && args[0]) ? args[0].trim() : '';
+            if (!emoji) return await sock.sendMessage(jid, { text: '❌ Provide an emoji.' });
             const state = readState();
-            state.statusEmoji = args.trim();
+            state.statusEmoji = emoji;
             writeState(state);
-            await sock.sendMessage(jid, { text: `✅ Status emoji set to: ${args.trim()}` });
+            await sock.sendMessage(jid, { text: `✅ Status emoji set to: ${emoji}` });
         }
     },
 
@@ -675,7 +674,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['on', 'off'].includes(mode)) return await sock.sendMessage(jid, { text: '❌ Usage: `autovs on/off`' });
             const state = readState();
             state.autovs = mode;
@@ -691,7 +690,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['on', 'off'].includes(mode)) return await sock.sendMessage(jid, { text: '❌ Usage: `autors on/off`' });
             const state = readState();
             state.autors = mode;
@@ -704,9 +703,9 @@ module.exports = [
     {
         name: 'ss',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner }) => {
+        execute: async (sock, msg, args) => {
             const jid = msg.key.remoteJid;
-            let url = args ? args.trim() : '';
+            let url = (args && args[0]) ? args[0].trim() : '';
             if (!url) {
                 const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
                 if (quoted) {
@@ -747,14 +746,12 @@ module.exports = [
     {
         name: 'spam',
         isPrefixless: false,
-        execute: async (sock, msg, args, { isOwner, isSudo }) => {
+        execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
-            if (!isOwner && !isSudo) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `spam <count> <text>`' });
-            const parts = args.trim().split(' ');
-            const count = parseInt(parts[0]);
+            if (!isOwner) return;
+            const count = (args && args[0]) ? parseInt(args[0]) : NaN;
             if (isNaN(count) || count < 1 || count > 30) return await sock.sendMessage(jid, { text: '❌ Count must be 1-30.' });
-            const text = parts.slice(1).join(' ');
+            const text = (args && args.length > 1) ? args.slice(1).join(' ') : '';
             if (!text) return await sock.sendMessage(jid, { text: '❌ Provide text to spam.' });
             for (let i = 0; i < count; i++) {
                 await sock.sendMessage(jid, { text });
@@ -770,8 +767,8 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `setcmd <command>` (reply to a sticker)' });
-            const cmdName = args.trim();
+            const cmdName = (args && args[0]) ? args[0].trim() : '';
+            if (!cmdName) return await sock.sendMessage(jid, { text: '❌ Usage: `setcmd <command>` (reply to a sticker)' });
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!quoted) return await sock.sendMessage(jid, { text: '❌ Reply to a sticker.' });
             const sticker = quoted.stickerMessage;
@@ -807,12 +804,11 @@ module.exports = [
         }
     },
 
-    // 31. 🥷🏼 (kamui) – prefixless, silent, sends to DM
+    // 31. 🥷🏼 (kamui)
     {
         name: '🥷🏼',
         isPrefixless: true,
-        execute: async (sock, msg, args) => {
-            // Completely silent – no response messages
+        execute: async (sock, msg) => {
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!quoted) return;
             const raw = getRawMessage(quoted);
@@ -822,6 +818,10 @@ module.exports = [
             if (!sender) return;
             try {
                 const type = raw.imageMessage ? 'image' : (raw.videoMessage ? 'video' : 'audio');
+                
+                // Dynamically import Baileys to circumvent synchronous ESM restrictions
+                const { downloadContentFromMessage } = await import('@itsliaaa/baileys');
+                
                 const stream = await downloadContentFromMessage(media, type);
                 let buffer = Buffer.from([]);
                 for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
@@ -836,15 +836,16 @@ module.exports = [
         }
     },
 
-    // 32. fw – forward message (fix)
+    // 32. fw
     {
         name: 'fw',
         isPrefixless: false,
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            if (!args) return await sock.sendMessage(jid, { text: '❌ Usage: `fw <number>` (reply to a message)' });
-            const target = args.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            const rawNum = (args && args[0]) ? args[0].replace(/[^0-9]/g, '') : '';
+            if (!rawNum) return await sock.sendMessage(jid, { text: '❌ Usage: `fw <number>` (reply to a message)' });
+            const target = rawNum + '@s.whatsapp.net';
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             if (!quoted) return await sock.sendMessage(jid, { text: '❌ Reply to a message to forward.' });
             try {
@@ -863,7 +864,7 @@ module.exports = [
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            const mode = args ? args.toLowerCase().trim() : '';
+            const mode = (args && args[0]) ? args[0].toLowerCase().trim() : '';
             if (!['public', 'private'].includes(mode)) return await sock.sendMessage(jid, { text: '❌ Usage: `mode public|private`' });
             const state = readState();
             state.isPublic = (mode === 'public');
@@ -873,31 +874,33 @@ module.exports = [
         }
     },
 
-    
-{
-    name: 'owners',
-    isPrefixless: false,
-    execute: async (sock, msg, args, { isOwner }) => {
-        const jid = msg.key.remoteJid;
-        if (!isOwner) return;
-        const state = readState();
-        const hardcoded = config.owner || [];
-        const primary = state.primaryOwner || 'None';
-        const secondary = state.secondaryOwners || [];
-        const sudo = state.sudo || [];
+    // 34. owners
+    {
+        name: 'owners',
+        isPrefixless: false,
+        execute: async (sock, msg, args, { isOwner }) => {
+            const jid = msg.key.remoteJid;
+            if (!isOwner) return;
+            const primaryJid = core.getMasterJid() || 'None';
+            const primaryLid = core.getMasterLid() || 'None';
+            const secondJids = core.getMastersJid();
+            const secondLids = core.getMastersLid();
 
-        let text = '👑 *OWNERS & SUDO LIST*\n━━━━━━━━━━━━━━━━━━━\n\n';
-        text += `👤 *Primary Owner:* ${primary}\n`;
-        text += `📌 *Hardcoded Owners:* ${hardcoded.join(', ') || 'None'}\n`;
-        text += `👥 *Secondary Owners:* ${secondary.join(', ') || 'None'}\n`;
-        text += `🛡️ *Sudo Users:* ${sudo.join(', ') || 'None'}`;
+            let text = '👑 *OWNERS LIST*\n━━━━━━━━━━━━━━━━━━━\n\n';
+            text += `👤 *Primary Owner (JID):* @${primaryJid.split('@')[0]}\n`;
+            text += `👤 *Primary Owner (LID):* @${primaryLid.split('@')[0]}\n\n`;
+            
+            text += `👥 *Secondary Owners (JIDs):*\n`;
+            text += secondJids.map(jid => `• @${jid.split('@')[0]}`).join('\n') || '• None';
+            text += `\n\n👥 *Secondary Owners (LIDs):*\n`;
+            text += secondLids.map(lid => `• @${lid.split('@')[0]}`).join('\n') || '• None';
 
-        const mentions = [...hardcoded, primary, ...secondary, ...sudo].filter(Boolean);
-        await sock.sendMessage(jid, { text, mentions });
-    }
-}, 
+            const mentions = [primaryJid, primaryLid, ...secondJids, ...secondLids].filter(Boolean);
+            await sock.sendMessage(jid, { text, mentions });
+        }
+    }, 
 
-    // 35. setsudo
+    // 35. setsudo (Updates Sudo, auto-resolves LID)
     {
         name: 'setsudo',
         isPrefixless: false,
@@ -906,16 +909,35 @@ module.exports = [
             if (!isOwner) return;
             const target = parseTarget(msg, args);
             if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
+
+            // Active server lookup for LID
+            let resolvedLid = null;
+            try {
+                const lookup = await sock.onWhatsApp(target.split('@')[0]); // Fixed: onWhatsApp
+                if (lookup && lookup[0] && lookup[0].exists) {
+                    resolvedLid = lookup[0].lid || null;
+                }
+            } catch (e) {}
+
             const state = readState();
             if (!state.sudo) state.sudo = [];
             if (state.sudo.includes(target)) return await sock.sendMessage(jid, { text: '⚠️ Already sudo.' });
+            
             state.sudo.push(target);
+            if (resolvedLid && !state.sudo.includes(resolvedLid)) {
+                state.sudo.push(resolvedLid);
+            }
             writeState(state);
-            await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} added to sudo.` });
+
+            const label = resolvedLid ? `@${target.split('@')[0]} & LID @${resolvedLid.split('@')[0]}` : `@${target.split('@')[0]}`;
+            await sock.sendMessage(jid, { 
+                text: `✅ ${label} added to sudo.`, 
+                mentions: [target, resolvedLid].filter(Boolean) 
+            });
         }
     },
 
-    // 36. setowner
+    // 36. setowner (Updates owner, auto-resolves LID)
     {
         name: 'setowner',
         isPrefixless: false,
@@ -924,12 +946,36 @@ module.exports = [
             if (!isOwner) return;
             const target = parseTarget(msg, args);
             if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
+
+            // Active server lookup for LID
+            let resolvedLid = null;
+            try {
+                const lookup = await sock.onWhatsApp(target.split('@')[0]); // Fixed: onWhatsApp
+                if (lookup && lookup[0] && lookup[0].exists) {
+                    resolvedLid = lookup[0].lid || null;
+                }
+            } catch (e) {}
+
+            // Save in dynamic state.json
             const state = readState();
             if (!state.secondaryOwners) state.secondaryOwners = [];
             if (state.secondaryOwners.includes(target)) return await sock.sendMessage(jid, { text: '⚠️ Already secondary owner.' });
+            
             state.secondaryOwners.push(target);
+            if (resolvedLid && !state.secondaryOwners.includes(resolvedLid)) {
+                state.secondaryOwners.push(resolvedLid);
+            }
             writeState(state);
-            await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} added as secondary owner.` });
+
+            // Save in Single Source of Truth database (core.js/core.json)
+            core.addMaster(target);
+            if (resolvedLid) core.addMasterLid(resolvedLid);
+
+            const label = resolvedLid ? `@${target.split('@')[0]} & LID @${resolvedLid.split('@')[0]}` : `@${target.split('@')[0]}`;
+            await sock.sendMessage(jid, { 
+                text: `✅ ${label} registered as secondary owner.`, 
+                mentions: [target, resolvedLid].filter(Boolean) 
+            });
         }
     },
 
@@ -950,36 +996,34 @@ module.exports = [
         }
     },
 
+    // 38. delowner
     {
-    name: 'delowner',
-    isPrefixless: false,
-    execute: async (sock, msg, args, { isOwner }) => {
-        const jid = msg.key.remoteJid;
-        if (!isOwner) return;
-        const target = parseTarget(msg, args);
-        if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
+        name: 'delowner',
+        isPrefixless: false,
+        execute: async (sock, msg, args, { isOwner }) => {
+            const jid = msg.key.remoteJid;
+            if (!isOwner) return;
+            const target = parseTarget(msg, args);
+            if (!target) return await sock.sendMessage(jid, { text: '❌ Mention or reply to a user.' });
 
-        const state = readState();
-        const primary = state.primaryOwner || '';
-        const hardcoded = config.owner || [];
+            const state = readState();
+            const primaryJid = core.getMasterJid() || '';
+            const primaryLid = core.getMasterLid() || '';
 
-        // Block removal if target is primary or hardcoded
-        if (target === primary) {
-            return await sock.sendMessage(jid, { text: '❌ Cannot remove the primary owner (the one who paired the bot).' });
+            if (target === primaryJid || target === primaryLid) {
+                return await sock.sendMessage(jid, { text: '❌ Cannot remove the primary owner.' });
+            }
+
+            core.removeMaster(target); // Remove from Single Source of Truth
+
+            if (state.secondaryOwners) {
+                state.secondaryOwners = state.secondaryOwners.filter(id => id !== target);
+                writeState(state);
+            }
+
+            await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} removed from owners.` });
         }
-        if (hardcoded.includes(target)) {
-            return await sock.sendMessage(jid, { text: '❌ Cannot remove a hardcoded primary owner.' });
-        }
-
-        if (!state.secondaryOwners || !state.secondaryOwners.includes(target)) {
-            return await sock.sendMessage(jid, { text: '⚠️ Not a secondary owner.' });
-        }
-
-        state.secondaryOwners = state.secondaryOwners.filter(id => id !== target);
-        writeState(state);
-        await sock.sendMessage(jid, { text: `✅ @${target.split('@')[0]} removed from secondary owners.` });
-    }
-}, 
+    }, 
 
     // 39. restart
     {
@@ -1005,7 +1049,7 @@ module.exports = [
         }
     },
 
-    // ─── 41. DIAGNOSE ────────────────────────────────────────────
+    // 41. diagnose
     {
         name: 'diagnose',
         isPrefixless: false,
@@ -1023,7 +1067,7 @@ module.exports = [
         }
     },
 
-    // ─── 42. LOGS ────────────────────────────────────────────────
+    // 42. logs
     {
         name: 'logs',
         isPrefixless: false,
@@ -1033,12 +1077,13 @@ module.exports = [
             if (!global.recentLogs || global.recentLogs.length === 0) {
                 return await sock.sendMessage(jid, { text: '📋 No recent logs available.' });
             }
-            let count = parseInt(args) || 20;
+            const countInput = (args && args[0]) ? parseInt(args[0]) : NaN;
+            let count = countInput || 20;
             if (count > 100) count = 100;
             const logs = global.recentLogs.slice(-count);
             let text = `📋 *Recent Logs (last ${logs.length})*\n━━━━━━━━━━━━━━━━━━━\n\n`;
             logs.forEach(entry => {
-                const time = entry.time.split('T')[1].slice(0, 8); // HH:MM:SS
+                const time = entry.time.split('T')[1].slice(0, 8);
                 text += `[${time}] ${entry.level}: ${entry.message}\n`;
             });
             if (text.length > 65000) text = text.slice(0, 65000) + '\n... (truncated)';
