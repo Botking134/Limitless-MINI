@@ -107,7 +107,7 @@ const BANKAI_LIST = [
     },
     {
         name: 'Senjumaru Shutara',
-        bankai: 'Shatatsu Karagara Shigarami no Tsuji',
+        bankai: 'Shatatsu Karagara Shigarami no Summary',
         images: ['https://files.catbox.moe/j7j6n9.jpeg']
     },
     {
@@ -197,18 +197,30 @@ function getRandomBankai() {
     return { ...entry, image };
 }
 
-// Simple in-memory cache for image buffers (to avoid re-downloading)
 const imageCache = {};
 
 async function getImageBuffer(url) {
     if (imageCache[url]) return imageCache[url];
+    
+    // Route through proxy to bypass IP blocks
+    const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
+
     try {
-        const response = await axios.get(url, { responseType: 'arraybuffer' });
+        const response = await axios.get(proxyUrl, { 
+            responseType: 'arraybuffer',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            timeout: 15000
+        });
         const buffer = Buffer.from(response.data);
-        imageCache[url] = buffer;
-        return buffer;
+        if (buffer && buffer.length > 0) {
+            imageCache[url] = buffer;
+            return buffer;
+        }
+        return null;
     } catch (err) {
-        console.error(`Failed to fetch image: ${url}`, err);
+        console.error(`[Menu Plugin] Failed to fetch image via proxy: ${url}`, err.message);
         return null;
     }
 }
@@ -258,9 +270,6 @@ module.exports = [
 
             const bankaiEntry = getRandomBankai();
             const imageBuffer = await getImageBuffer(bankaiEntry.image);
-            if (!imageBuffer) {
-                return await sock.sendMessage(jid, { text: '❌ Failed to load menu image.' }, { quoted: msg });
-            }
 
             const stats = getStats();
             const menuText =
@@ -287,13 +296,26 @@ module.exports = [
                 { buttonId: `menu_dl`, buttonText: { displayText: '📥 Download' }, type: 1 }
             ];
 
-            await sock.sendMessage(jid, {
-                image: imageBuffer,
-                caption: menuText,
-                mentions: [sender],
-                buttons: buttons,
-                headerType: 1
-            }, { quoted: msg });
+            if (imageBuffer && imageBuffer.length > 0) {
+                const fileExt = bankaiEntry.image.split('.').pop().toLowerCase();
+                const mimeType = fileExt === 'webp' ? 'image/webp' : (fileExt === 'png' ? 'image/png' : 'image/jpeg');
+
+                await sock.sendMessage(jid, {
+                    image: imageBuffer,
+                    mimetype: mimeType,
+                    caption: menuText,
+                    mentions: [sender],
+                    buttons: buttons,
+                    headerType: 1
+                }, { quoted: msg });
+            } else {
+                await sock.sendMessage(jid, {
+                    text: menuText,
+                    mentions: [sender],
+                    buttons: buttons,
+                    headerType: 1
+                }, { quoted: msg });
+            }
         }
     },
 
