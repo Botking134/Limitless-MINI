@@ -238,6 +238,28 @@ function formatUptime(seconds) {
     return str.trim();
 }
 
+function getHostPlatform() {
+    if (process.env.REPL_ID) return 'Replit';
+    if (process.env.HEROKU_APP_NAME || process.env.DYNO) return 'Heroku';
+    if (process.env.RENDER) return 'Render';
+    if (process.env.RAILWAY_PROJECT_ID) return 'Railway';
+    if (process.env.KOYEB_APP_NAME) return 'Koyeb';
+    if (process.env.CODESPACES) return 'GitHub Codespaces';
+    
+    const hostname = process.env.HOSTNAME || '';
+    if (hostname.includes('bot-hosting.net')) return 'Bot-Hosting.net';
+    if (process.env.P_SERVER_UUID || hostname.includes('pterodactyl')) return 'Pterodactyl';
+    
+    if (process.platform === 'win32') return 'Windows (Local)';
+    if (process.platform === 'darwin') return 'macOS (Local)';
+    
+    if (/^[a-f0-9]{12}$/i.test(hostname)) {
+        return 'Docker Container';
+    }
+    
+    return hostname || 'Linux VPS';
+}
+
 function getStats() {
     const prefix = config.prefix || '.';
     const mode = config.isPublic ? 'Public' : 'Private';
@@ -246,7 +268,7 @@ function getStats() {
     const totalCommands = Object.keys(commands).length;
     const ram = process.memoryUsage();
     const ramUsed = (ram.heapUsed / 1024 / 1024).toFixed(2);
-    const host = process.env.HOSTNAME || 'unknown';
+    const host = getHostPlatform();
 
     return { prefix, mode, uptime: uptimeStr, totalCommands, ram: `${ramUsed} MiB`, host };
 }
