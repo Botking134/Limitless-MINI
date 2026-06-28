@@ -3,7 +3,7 @@ const readline = require('readline');
 const { Boom } = require('@hapi/boom');
 const path = require('path');
 const config = require('./config');
-const core = require('./core');          // 🆕 single source of truth
+const core = require('./core');          // single source of truth
 const fs = require('fs');
 
 // ─── STATE PATH (for welcome flag only) ─────────────────────────
@@ -90,9 +90,6 @@ async function startBot() {
 
   const authFolder = path.join(__dirname, 'storage', 'session_auth');
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-
-  // Import saveState from handlers for dynamic settings (not master)
-  const { saveState } = require('./handlers');
 
   let targetNumber = null;   // plain number entered by user
   let pairingMode = false;
@@ -194,65 +191,69 @@ async function startBot() {
     if (connection === 'open') {
       console.log('\x1b[32m✅ Bankai activated! Connection established successfully!\x1b[0m');
 
-      // ─── SET MASTER (OPTION B: always overwrite) ────────────
+      let masterJid = null;
+
+      // 1. Resolve Master JID
       if (targetNumber) {
-        core.setMaster(targetNumber);   // stores JID in core.json
-        console.log(`\x1b[33m👑 Master set to: ${core.getMasterJid()}\x1b[0m`);
-
-        // ─── SEND WELCOME MESSAGE (once per bot lifetime) ──────
-        if (!hasWelcomeSent()) {
-          await delay(2000);
-          const masterJid = core.getMasterJid();   // use the stored JID
-          try {
-            const prefixVal = config.prefix || '⚡';
-            const timeStr = new Date().toLocaleTimeString('en-US', {
-              timeZone: 'Africa/Lagos', hour12: true
-            });
-            let pingMs = 35;
-            try {
-              const startPing = Date.now();
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 3000);
-              await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
-              clearTimeout(timeout);
-              pingMs = Date.now() - startPing;
-            } catch (e) { /* ignore */ }
-
-            const randomKido = getRandomKido();
-            const welcomeText =
-              `⚔️══ [  ONLINE ] ══⚔️\n` +
-              `𝒀𝒐𝒌𝒐𝒔𝒐! \n` +
-              `𝑾𝒂𝒕𝒂𝒔𝒉𝒊𝒏𝒐 𝒔𝒐𝒖𝒍 𝒔𝒐𝒄𝒊𝒆𝒕𝒚\n\n` +
-              ` 𝑷𝒓𝒆𝒇𝒊𝒙 :: ${prefixVal}\n` +
-              `  𝑹𝒆𝒊𝒂𝒕𝒔𝒖 𝒔𝒑𝒆𝒆𝒅 :: ${pingMs}ms\n` +
-              ` 𝑻𝒊𝒎𝒆 :: ${timeStr} WAT\n\n` +
-              `─── [ Kaidō ] ───\n` +
-              ` ${randomKido}\n` +
-              `━━━━━━━━━━━━━━━━`;
-
-            const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
-            await sock.sendMessage(masterJid, {
-              video: { url: gifUrl },
-              gifPlayback: true,
-              caption: welcomeText
-            });
-
-            // Only mark sent after success
-            welcomeSent = true;
-            markWelcomeSent();
-            console.log(`\x1b[32m✅ Welcome message dispatched to master ${masterJid}\x1b[0m`);
-          } catch (err) {
-            console.error(`\x1b[31m❌ Failed to send welcome: ${err.message}\x1b[0m`);
-            // Will retry on next connection
-          }
-        } else {
-          console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
-        }
+        masterJid = core.setMaster(targetNumber);   // stores JID in core.json
+        console.log(`\x1b[33m👑 Master set from pairing: ${masterJid}\x1b[0m`);
       } else {
-        console.log('\x1b[33m⚠️ QR mode – master not auto-set. Use a command to set master if needed.\x1b[0m');
+        masterJid = core.getMasterJid();
+        if (masterJid) {
+          console.log(`\x1b[33m👑 Restored Master from Core: ${masterJid}\x1b[0m`);
+        } else {
+          console.log('\x1b[33m⚠️ Warning: No Master JID detected in Core. Use a command to set one.\x1b[0m');
+        }
       }
 
-      // ─── Always-Online Presence ──────────────────────────────
+      // 2. Dispatch Welcome Message (once per bot lifetime)
+      if (masterJid && !hasWelcomeSent()) {
+        await delay(2000);
+        try {
+          const prefixVal = config.prefix || '⚡';
+          const timeStr = new Date().toLocaleTimeString('en-US', {
+            timeZone: 'Africa/Lagos', hour12: true
+          });
+          let pingMs = 35;
+          try {
+            const startPing = Date.now();
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            await fetch("https://1.1.1.1", { method: 'HEAD', signal: controller.signal });
+            clearTimeout(timeout);
+            pingMs = Date.now() - startPing;
+          } catch (e) { /* ignore */ }
+
+          const randomKido = getRandomKido();
+          const welcomeText =
+            `⚔️══ [  ONLINE ] ══⚔️\n` +
+            `𝒀𝒐𝒌𝒐𝒔𝒐! \n` +
+            `𝑾𝒂𝒕𝒂𝒔𝒉𝒊𝒏𝒐 𝒔𝒐𝒖𝒍 𝒔𝒐𝒄𝒊𝒆𝒕𝒚\n\n` +
+            ` 𝑷𝒓𝒆𝒇𝒊𝒙 :: ${prefixVal}\n` +
+            `  𝑹𝒆𝒊𝒂𝒕𝒔𝒖 𝒔𝒑𝒆𝒆𝒅 :: ${pingMs}ms\n` +
+            ` 𝑻𝒊𝒎𝒆 :: ${timeStr} WAT\n\n` +
+            `─── [ Kaidō ] ───\n` +
+            ` ${randomKido}\n` +
+            `━━━━━━━━━━━━━━━━`;
+
+          const gifUrl = "https://i.giphy.com/media/QfCQQQAI860CXZY9qs/giphy.mp4";
+          await sock.sendMessage(masterJid, {
+            video: { url: gifUrl },
+            gifPlayback: true,
+            caption: welcomeText
+          });
+
+          welcomeSent = true;
+          markWelcomeSent();
+          console.log(`\x1b[32m✅ Welcome message dispatched to master ${masterJid}\x1b[0m`);
+        } catch (err) {
+          console.error(`\x1b[31m❌ Failed to send welcome: ${err.message}\x1b[0m`);
+        }
+      } else if (masterJid) {
+        console.log('\x1b[33m⚠️ Welcome already sent previously – skipping.\x1b[0m');
+      }
+
+      // Always-Online Presence
       setInterval(async () => {
         try { await sock.sendPresenceUpdate('available'); } catch (e) { /* ignore */ }
       }, 15000);
