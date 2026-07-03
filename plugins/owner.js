@@ -142,7 +142,7 @@ function readReminders() {
 }
 
 function writeReminders(reminders) {
-    const dir = path.dirname(NOTES_PATH);
+    const dir = path.dirname(REMINDERS_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(REMINDERS_PATH, JSON.stringify(reminders, null, 2), 'utf-8');
 }
@@ -625,33 +625,64 @@ module.exports = [
         }
     },
 
-    // 22. update
+    // 22. updatesetup
+    {
+        name: 'updatesetup',
+        isPrefixless: false,
+        execute: async (sock, msg, args, { isOwner }) => {
+            const jid = msg.key.remoteJid;
+            if (!isOwner) return;
+
+            await sock.sendMessage(jid, { text: '⚙️ Initializing and setting up Git repository...' });
+            const repo = 'https://github.com/Botking134/Limitless-MINI.git';
+            
+            const cmds = [
+                `git init`,
+                `git remote remove origin 2>/dev/null || true`,
+                `git remote add origin ${repo}`,
+                `git fetch origin`,
+                `git checkout -b main 2>/dev/null || git checkout main || git checkout -b master 2>/dev/null || git checkout master`,
+                `git branch --set-upstream-to=origin/main main || git branch --set-upstream-to=origin/master master`
+            ];
+
+            exec(cmds.join(' && '), { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, async (err) => {
+                if (err) {
+                    await sock.sendMessage(jid, { text: `❌ Setup failed:\n${err.message}` });
+                } else {
+                    await sock.sendMessage(jid, { text: '✅ Git setup complete! You can now use the `update` command.' });
+                }
+            });
+        }
+    },
+
+    // 23. update
     {
         name: 'update',
         isPrefixless: false,
         execute: async (sock, msg, args, { isOwner }) => {
             const jid = msg.key.remoteJid;
             if (!isOwner) return;
-            await sock.sendMessage(jid, { text: '🔄 Pulling updates from GitHub...' });
-            const repo = 'https://github.com/Botking134/Limitless-MINI.git';
+
+            await sock.sendMessage(jid, { text: '🔄 Merging remote changes into local files...' });
+
             const cmds = [
-                `git remote add origin ${repo} 2>/dev/null || git remote set-url origin ${repo}`,
-                `git fetch origin`,
-                `git reset --hard origin/master || git reset --hard origin/main`,
-                `npm install --silent`
+                `git config pull.rebase false`,           // Use standard merge, not rebase
+                `git pull -X theirs --no-edit`,           // Pull and auto-prefer remote changes if a conflict occurs
+                `npm install --silent`                    // Update dependencies if package.json changed
             ];
-            exec(cmds.join(' && '), async (err) => {
+
+            exec(cmds.join(' && '), { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, async (err, stdout, stderr) => {
                 if (err) {
                     await sock.sendMessage(jid, { text: `❌ Update failed:\n${err.message}` });
                 } else {
-                    await sock.sendMessage(jid, { text: `✅ Update successful! Restarting...` });
+                    await sock.sendMessage(jid, { text: `✅ Remote changes successfully merged! Restarting...` });
                     setTimeout(() => process.exit(1), 2000);
                 }
             });
         }
     },
 
-    // 23. statusemoji
+    // 24. statusemoji
     {
         name: 'statusemoji',
         isPrefixless: false,
@@ -667,7 +698,7 @@ module.exports = [
         }
     },
 
-    // 24. autovs (autoviewstatus)
+    // 25. autovs (autoviewstatus)
     {
         name: 'autovs',
         isPrefixless: false,
@@ -683,7 +714,7 @@ module.exports = [
         }
     },
 
-    // 25. autors (autoreactstatus)
+    // 26. autors (autoreactstatus)
     {
         name: 'autors',
         isPrefixless: false,
@@ -699,7 +730,7 @@ module.exports = [
         }
     },
 
-    // 26. ss
+    // 27. ss
     {
         name: 'ss',
         isPrefixless: false,
@@ -724,7 +755,7 @@ module.exports = [
         }
     },
 
-    // 27. device
+    // 28. device
     {
         name: 'device',
         isPrefixless: false,
@@ -742,7 +773,7 @@ module.exports = [
         }
     },
 
-    // 28. spam
+    // 29. spam
     {
         name: 'spam',
         isPrefixless: false,
@@ -760,7 +791,7 @@ module.exports = [
         }
     },
 
-    // 29. setcmd
+    // 30. setcmd
     {
         name: 'setcmd',
         isPrefixless: false,
@@ -783,7 +814,7 @@ module.exports = [
         }
     },
 
-    // 30. delcmd
+    // 31. delcmd
     {
         name: 'delcmd',
         isPrefixless: false,
@@ -804,7 +835,7 @@ module.exports = [
         }
     },
 
-    // 31. 🥷🏼 (kamui)
+    // 32. 🥷🏼 (kamui)
     {
         name: '🥷🏼',
         isPrefixless: true,
@@ -836,7 +867,7 @@ module.exports = [
         }
     },
 
-    // 32. fw
+    // 33. fw
     {
         name: 'fw',
         isPrefixless: false,
@@ -857,7 +888,7 @@ module.exports = [
         }
     },
 
-    // 33. mode
+    // 34. mode
     {
         name: 'mode',
         isPrefixless: false,
@@ -874,7 +905,7 @@ module.exports = [
         }
     },
 
-    // 34. owners
+    // 35. owners
     {
         name: 'owners',
         isPrefixless: false,
@@ -900,7 +931,7 @@ module.exports = [
         }
     }, 
 
-    // 35. setsudo (Updates Sudo, auto-resolves LID)
+    // 36. setsudo (Updates Sudo, auto-resolves LID)
     {
         name: 'setsudo',
         isPrefixless: false,
@@ -937,7 +968,7 @@ module.exports = [
         }
     },
 
-    // 36. setowner (Updates owner, auto-resolves LID)
+    // 37. setowner (Updates owner, auto-resolves LID)
     {
         name: 'setowner',
         isPrefixless: false,
@@ -979,7 +1010,7 @@ module.exports = [
         }
     },
 
-    // 37. delsudo
+    // 38. delsudo
     {
         name: 'delsudo',
         isPrefixless: false,
@@ -996,7 +1027,7 @@ module.exports = [
         }
     },
 
-    // 38. delowner
+    // 39. delowner
     {
         name: 'delowner',
         isPrefixless: false,
@@ -1025,7 +1056,7 @@ module.exports = [
         }
     }, 
 
-    // 39. restart
+    // 40. restart
     {
         name: 'restart',
         isPrefixless: false,
@@ -1037,7 +1068,7 @@ module.exports = [
         }
     },
 
-    // 40. shutdown
+    // 41. shutdown
     {
         name: 'shutdown',
         isPrefixless: false,
@@ -1049,7 +1080,7 @@ module.exports = [
         }
     },
 
-    // 41. diagnose
+    // 42. diagnose
     {
         name: 'diagnose',
         isPrefixless: false,
@@ -1067,7 +1098,7 @@ module.exports = [
         }
     },
 
-    // 42. logs
+    // 43. logs
     {
         name: 'logs',
         isPrefixless: false,
