@@ -143,8 +143,9 @@ const EMOJI_MAP = {
 // ─── MESSAGE HANDLER ─────────────────────────────────────────────
 async function handleMessage(sock, chatUpdate) {
     const msg = chatUpdate.messages[0];
-    if (!msg || msg.key.fromMe) return;
+    if (!msg) return;
 
+    // 1. Extract message text first to check for commands
     let text = '';
     if (msg.message?.conversation) {
         text = msg.message.conversation;
@@ -156,6 +157,21 @@ async function handleMessage(sock, chatUpdate) {
         text = msg.message.listResponseMessage.singleSelectReply.selectedRowId;
     } else {
         text = '[Media]';
+    }
+
+    const trimmedText = text.trim();
+    const prefix = config.prefix || '.';
+
+    // Check if the message is an intentional command or button interaction
+    const isCommand = trimmedText.startsWith(prefix) || 
+                      BUTTON_LABEL_MAP[trimmedText] || 
+                      BUTTON_ID_MAP[trimmedText];
+
+    // 2. Filter self-messages (fromMe)
+    if (msg.key.fromMe) {
+        // If it's a message from the bot's own number, we only allow it to proceed 
+        // if it is an explicit command (prevents infinite loops on standard responses)
+        if (!isCommand) return;
     }
 
     const jid = msg.key.remoteJid;
@@ -234,7 +250,6 @@ async function handleMessage(sock, chatUpdate) {
     }
 
     // ─── HANDLE .asst BUTTON PRESS ──────────────────────────────
-    const trimmedText = text.trim();
     if (trimmedText === 'deactivate_all') {
         if (!isMaster) {
             await sock.sendMessage(jid, { text: "❌ Only masters can deactivate assistants." }, { quoted: msg });
@@ -268,9 +283,9 @@ async function handleMessage(sock, chatUpdate) {
         args = [];
         console.log(`[BUTTON] ID match: ${trimmedText} → ${commandName}`);
     } else {
-        const prefix = config.prefix || '.';
-        if (trimmedText.startsWith(prefix)) {
-            const withoutPrefix = trimmedText.slice(prefix.length).trim();
+        const prefixVal = config.prefix || '.';
+        if (trimmedText.startsWith(prefixVal)) {
+            const withoutPrefix = trimmedText.slice(prefixVal.length).trim();
             const parts = withoutPrefix.split(/\s+/);
             commandName = parts.shift().toLowerCase();
             args = parts;
@@ -316,8 +331,8 @@ async function handleMessage(sock, chatUpdate) {
     }
 
     // ─── AGENT DETECTION ──────────────────────────────────────────
-    const prefix = config.prefix || '.';
-    if (!trimmedText.startsWith(prefix)) {
+    const prefixVal = config.prefix || '.';
+    if (!trimmedText.startsWith(prefixVal)) {
         const lowerMsg = trimmedText.toLowerCase();
 
         const mentionsAizen = lowerMsg.includes('aizen');
